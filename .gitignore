@@ -1,0 +1,6 @@
+node_modules/
+.nyc-src/
+.nyc_output/
+coverage/
+.scratch/
+.crap4js-scratch/

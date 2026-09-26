@@ -1,0 +1,17 @@
+{
+  "name": "fa-craft",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Minecraft-like voxel sandbox widget (pure JS) for flutter_js_widget_runtime — issue IstiN/fa_craft#1",
+  "scripts": {
+    "test": "node test/all.js",
+    "instrument": "rm -rf .nyc-src .nyc_output coverage && nyc instrument game .nyc-src --extension .js",
+    "merge": "node scripts/coverage-merge.js",
+    "cover": "npm run instrument && node test/all.js && npm run merge && nyc report --reporter=text-summary --reporter=json-summary --check-coverage --statements 85",
+    "crap": "npm run cover && node node_modules/crap4js/src/cli.js --coverage coverage/coverage-final.json --threshold 30 game"
+  },
+  "devDependencies": {
+    "crap4js": "github:vabhzw17eg2qu4m9-bit/crap4js#6d80f53e739b",
+    "nyc": "17.1.0"
+  }
+}
