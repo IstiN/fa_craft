@@ -70,9 +70,15 @@ Facraft.hud = (function() {
 
     var gameStack = {
       type: 'stack', children: [
-        { // viewport area: drag = look, tap = place; the voxel node paints here
-          type: 'gestureDetector', onTap: 'place', onPanUpdate: 'look',
-          child: { type: 'fill', color: sky.color },
+        { // viewport area: drag = look, tap = place; the scene3d node paints
+          // the real world (software meshes, sky-colored background).
+          // Positioned on all four edges so the scene gets tight full-bleed
+          // constraints (no aspect box).
+          type: 'container', positioned: { left: 0, top: 0, right: 0, bottom: 0 },
+          child: {
+            type: 'gestureDetector', onTap: 'place', onPanUpdate: 'look',
+            child: F.voxel.view(w, w.player, sky, state.target),
+          },
         },
         { // virtual joystick pad (touch walk)
           type: 'container', positioned: { left: 16, bottom: 16 },

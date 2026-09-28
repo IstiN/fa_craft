@@ -53,20 +53,46 @@ test('bridge budget: per-frame outbound calls stay bounded (IT)', async () => {
   assert.ok(steady2 <= steady + 0.5, 'no per-frame growth: ' + steady + ' → ' + steady2);
 });
 
-test('voxel adapter: only dirty chunks upload meshes; camera each frame', async () => {
-  const { jsr, sandbox } = await bootGame({ hostHandlers: { 'voxel.mesh': () => true, 'voxel.camera': () => true } });
+test('voxel adapter: scene3d viewport shows world geometry; meshes cached while clean', async () => {
+  const { jsr, sandbox } = await bootGame();
   const F = sandbox.Facraft;
  await jsr.pumpFrames(5, 16.6);
-  const meshes0 = jsr.callCount('hostCall:voxel.mesh');
-  const cam0 = jsr.callCount('hostCall:voxel.camera');
+  const scene = findNode(jsr.lastTree, (n) => n.type === 'scene3d');
+  assert.ok(scene, 'scene3d viewport node in the render tree');
+  assert.ok(scene.meshes.length > 0, 'world geometry present');
+  assert.ok(scene.meshes.every((m) => m.vertices.length && m.faces.length), 'no empty meshes');
+  assert.ok(/^#[0-9a-f]{6}$/.test(scene.background), 'sky-colored background');
+  assert.strictEqual(scene.camera.position.length, 3, 'camera at the player eye');
+  const meshes0 = scene.meshes;
  await jsr.pumpFrames(20, 16.6);
-  assert.strictEqual(jsr.callCount('hostCall:voxel.mesh'), meshes0, 'no mesh upload without edits');
-  assert.ok(jsr.callCount('hostCall:voxel.camera') - cam0 === 20, 'camera synced per frame');
-  F.world.setBlock(F.state.world, 3, 60, 3, F.blocks.STONE);
+  assert.strictEqual(findNode(jsr.lastTree, (n) => n.type === 'scene3d').meshes, meshes0,
+    'mesh payload reused by identity while the world is clean');
+  F.world.setBlock(F.state.world, 0, Math.floor(F.state.world.player.y) - 1, 1, F.blocks.BRICKS);
  await jsr.pumpFrames(1, 16.6);
-  assert.strictEqual(jsr.callCount('hostCall:voxel.mesh'), meshes0 + 1, 'one chunk upload after one edit');
+  const meshes1 = findNode(jsr.lastTree, (n) => n.type === 'scene3d').meshes;
+  assert.notStrictEqual(meshes1, meshes0, 'world edit rebuilds the mesh payload');
+  const topY = Math.floor(F.state.world.player.y); // top face of the block underfoot
+  const hasPlaced = meshes1.some((m) => m.vertices.some((v) =>
+    v[0] === 0 && v[1] === topY && v[2] === 1));
+  assert.ok(hasPlaced, 'a top-face corner of the placed bricks block is in the payload');
  await jsr.pumpFrames(10, 16.6);
-  assert.strictEqual(jsr.callCount('hostCall:voxel.mesh'), meshes0 + 1, 'no re-upload while clean');
+  assert.strictEqual(findNode(jsr.lastTree, (n) => n.type === 'scene3d').meshes, meshes1,
+    'no rebuild while clean after the edit');
+});
+
+test('voxel adapter: targeted block gets a whitened highlight mesh', async () => {
+  const { jsr, sandbox } = await bootGame();
+  const F = sandbox.Facraft;
+  placeAndAim(F, F.state, 0, 60, -2, F.blocks.STONE);
+ await jsr.pumpFrames(1, 16.6);
+  const scene = findNode(jsr.lastTree, (n) => n.type === 'scene3d');
+  assert.ok(scene, 'scene rendered');
+  // The highlight shell is the one mesh whose color is lightened STONE.
+  const base = scene.meshes.filter((m) => m.vertices.length > 8);
+  const shells = scene.meshes.filter((m) => m.vertices.length === 8 && m.faces.length === 12);
+  assert.strictEqual(shells.length, 1, 'exactly one highlight shell (8 corners, 12 tris)');
+  assert.notStrictEqual(shells[0].color, '#8c8c91', 'shell is a whitened block color, not raw stone');
+  assert.ok(base.length >= 1, 'world geometry still present');
 });
 
 test('break: breaks the targeted block into inventory', async () => {

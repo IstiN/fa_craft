@@ -26,19 +26,15 @@ test('I2: byte-scan of outbound bridge surface — only the allow-list', () => {
     'requestAnimationFrame', 'setTimeout', 'clearTimeout', 'setInterval', 'clearInterval',
   ]);
   const tokens = src.match(/jsr\.([A-Za-z_$][\w$]*)/g) || [];
-  assert.ok(tokens.length > 10, 'widget actually uses the bridge');
+  assert.ok(tokens.length > 5, 'widget actually uses the bridge'); // render/export/theme/storage/events/title
   const used = new Set(tokens.map((t) => t.slice(4)));
   for (const t of used) {
     assert.ok(allow.has(t), 'bridge call jsr.' + t + ' is not on the local-only allow-list');
   }
 });
 
-test('I2: hostCall names are generic voxel capabilities only (I1 — no game logic in host)', () => {
+test('I2: voxel adapter rides the render tree — zero hostCall game traffic (I1)', () => {
   const src = gameSourceText();
   const names = src.match(/hostCall\(\s*'([^']+)'/g) || [];
-  assert.ok(names.length > 0, 'voxel adapter uses hostCall');
-  for (const raw of names) {
-    const name = raw.replace(/hostCall\(\s*'/, '').replace(/'$/, '');
-    assert.ok(/^voxel\.(mesh|camera|attach|light)$/.test(name), 'host capability ' + name + ' outside the voxel contract');
-  }
+  assert.strictEqual(names.length, 0, 'voxel adapter must not use hostCall: ' + names);
 });
