@@ -99,6 +99,13 @@ function dart() { return process.env.JSR_DART || 'dart'; }
 // bug, worked around HERE (not in game/*) by unwrapping single-child
 // listView nodes (fa_craft only ever uses one, as its scrollable root)
 // before the tree reaches the renderer. Disclosed in the goldens PR body.
+// The generated harness also gets ONE appended font hook: under `flutter
+// test` text renders with the Ahem test font (every glyph a filled box)
+// unless the real families are registered before the first frame — the same
+// FontLoader setup the upstream jsr goldens use. Roboto bytes are committed
+// under test/golden/fonts/ (Apache-2.0, see Roboto_LICENSE.txt) so captures
+// are SDK-independent; MaterialIcons comes from the pinned SDK (upstream
+// precedent) since icon nodes otherwise render the broken-image box.
 const RENDER_ADAPTER = `
 (function() {
   var origRender = jsr.render;
@@ -114,6 +121,63 @@ const RENDER_ADAPTER = `
   jsr.render = function(tree) { origRender(unwrap(tree)); };
 })();
 `;
+
+// Dart appended to the runtime's tool/jsr_widget_harness.dart by
+// patchHarness() below. Loaded before the first frame of every screenshot.
+const FONT_HOOK_DART = `
+
+// -- fa-craft goldens: real-font hook (patched in by tools/goldens.js) ------
+// Register the real font families before the first frame, exactly the way
+// the upstream jsr goldens do: Roboto from the copy committed in the
+// fa-craft repo (JSR_GOLDEN_FONT env), MaterialIcons from the pinned
+// Flutter SDK when present.
+Future<void> loadGoldenFonts() async {
+  final textFont = Platform.environment['JSR_GOLDEN_FONT'];
+  if (textFont != null && File(textFont).existsSync()) {
+    final bytes = await File(textFont).readAsBytes();
+    final loader = FontLoader('Roboto')
+      ..addFont(Future<ByteData>.value(ByteData.view(bytes.buffer)));
+    await loader.load();
+  }
+  final root = Platform.environment['FLUTTER_ROOT'];
+  final icons = root == null
+      ? null
+      : File('$root/bin/cache/artifacts/material_fonts/'
+          'MaterialIcons-Regular.otf');
+  if (icons != null && icons.existsSync()) {
+    final iconBytes = await icons.readAsBytes();
+    final iconLoader = FontLoader('MaterialIcons')
+      ..addFont(Future<ByteData>.value(ByteData.view(iconBytes.buffer)));
+    await iconLoader.load();
+  }
+}
+`;
+
+// The CLI runs the fixed `tool/jsr_widget_harness_test.dart` inside the
+// (disposable) runtime checkout — the only way in is to patch that checkout.
+// Idempotent: guarded by the hook symbol, so re-running against a reused
+// JSR_RUNTIME_DIR is a no-op; a fresh extraction gets the same patch.
+function patchHarness(runtimeDir) {
+  const harnessPath = path.join(runtimeDir, 'tool', 'jsr_widget_harness.dart');
+  let src = fs.readFileSync(harnessPath, 'utf8');
+  if (src.includes('loadGoldenFonts')) return;
+  const importAnchor =
+    "import 'package:js_widget_runtime/src/tooling/jsr_widget_tool_core.dart';";
+  const bootAnchor =
+    'Future<Map<String, dynamic>> prepareScreenshot(JsrToolSpec spec) ' +
+    'async {\n  final sw = Stopwatch()..start();';
+  if (!src.includes(importAnchor) || !src.includes(bootAnchor)) {
+    throw new Error(
+      `jsr_widget harness layout changed (jsr ${JSR_VERSION}) — ` +
+      'update the font hook anchors in tools/goldens.js');
+  }
+  src = src.replace(importAnchor, `${importAnchor}\n` +
+    "import 'dart:typed_data' show ByteData;\n" +
+    "import 'package:flutter/services.dart' show FontLoader;");
+  src = src.replace(bootAnchor, `${bootAnchor}\n  await loadGoldenFonts();`);
+  src += FONT_HOOK_DART;
+  fs.writeFileSync(harnessPath, src);
+}
 
 function buildWidgetDir() {
   const harness = require(path.join(ROOT, 'test', 'harness.js'));
@@ -194,6 +258,9 @@ function main() {
   const verb = process.argv[2] === 'verify' ? 'verify' : 'capture';
   buildWidgetDir();
   RUNTIME_DIR = jsrRuntimeDir();
+  patchHarness(RUNTIME_DIR);
+  process.env.JSR_GOLDEN_FONT =
+    path.join(ROOT, 'test', 'golden', 'fonts', 'Roboto-Regular.ttf');
   fs.mkdirSync(OUT_DIR, { recursive: true });
   let failed = 0;
   for (const state of STATES) {
