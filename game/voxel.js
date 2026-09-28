@@ -30,8 +30,6 @@ Facraft.voxel = (function() {
     return '#' + c2(r) + c2(g) + c2(b);
   }
 
-  function hexRGB(c) { return hex(c[0], c[1], c[2]); }
-
   // ---- illustrated faces ----
   // The 0.4.126 scene3d mesh node is colors-only (vertices + faces + flat
   // albedo), so block "textures" are built geometrically: near-field faces
@@ -40,8 +38,14 @@ Facraft.voxel = (function() {
   // across frames and runs, varied per block. Equal-color row runs merge
   // into one quad, so structured faces (planks, bricks, bark) stay cheap.
   var MOSAIC = 4;
-  var DETAIL_R2 = 30 * 30; // chunk-center distance²: nearer chunks mosaic, the far field stays one flat quad per face (keeps rebuilds tied to the existing chunk-pair cache key)
-  var SHADES = [0.86, 0.95, 1.04, 1.12];
+  var DETAIL_R2 = 30 * 30; // chunk-center distance²: nearer chunks mosaic, the far field keeps one quad per face (keeps rebuilds tied to the existing chunk-pair cache key)
+  var SHADES = [0.7, 0.86, 1.0, 1.16];
+  // per-block hue jitter: whole blocks drift apart in tint so the terrain
+  // reads as distinct blocks, not one wash
+  var HUES = [
+    [1, 1, 1], [0.9, 1.04, 0.92], [1.06, 0.94, 0.88],
+    [0.94, 1.06, 1.02], [1, 0.95, 1.05],
+  ];
 
   function h32(a, b, c, d) {
     var x = (a * 73856093) ^ (b * 19349663) ^ (c * 83492791) ^ ((d | 0) * 2654435761);
@@ -52,8 +56,8 @@ Facraft.voxel = (function() {
   function mul(c, m) { return [c[0] * m, c[1] * m, c[2] * m]; }
 
   function soil(d, r) {
-    if (r < 16) return mul(d, 0.72); // clod shadow
-    return mul(d, r < 30 ? 1.15 : SHADES[r % 4]);
+    if (r < 16) return mul(d, 0.6); // clod shadow
+    return mul(d, r < 30 ? 1.18 : SHADES[r % 4]);
   }
 
   // One mosaic cell's albedo. cls: 0 bottom / 1 side / 2 top; v rows run
@@ -63,53 +67,69 @@ Facraft.voxel = (function() {
     var Bk = B();
     var h = h32(wx, wy, wz, (cls << 6) | (i * MOSAIC + j));
     var r = h % 100;
+    var hue = HUES[h32(wx, wy, wz, 0x5eed) % HUES.length]; // per-block tint
+    var c;
     switch (id) {
       case Bk.GRASS: {
         var g = Bk.color(Bk.GRASS);
+        var edge = cls === 2 && (i === 0 || i === MOSAIC - 1 || j === 0 || j === MOSAIC - 1);
         var turf = (cls === 2) || (cls === 1 && (j >= MOSAIC - 1 ||
           (j === MOSAIC - 2 && (h >>> 7) % 100 < 45))); // turf overhang fringe
         if (turf) {
-          if (r < 18) return [g[0] * 1.25, g[1] * 1.12, g[2] * 0.7]; // dry blade
-          return mul(g, SHADES[r % 4]);
+          if (edge && r < 30) c = mul(g, 0.5); // blade notch on the face border
+          else if (edge) c = mul(g, 0.8); // shaded turf edge
+          else if (r < 14) c = [g[0] * 1.35, g[1] * 1.1, g[2] * 0.5]; // dry blade
+          else if (r < 30) c = mul(g, 0.6); // dark tuft
+          else c = mul(g, SHADES[r % 4]);
+        } else {
+          c = soil(Bk.color(Bk.DIRT), r);
         }
-        return soil(Bk.color(Bk.DIRT), r);
+        break;
       }
-      case Bk.DIRT: return soil(Bk.color(id), r);
+      case Bk.DIRT: c = soil(Bk.color(id), r); break;
       case Bk.STONE: {
         var s = Bk.color(id);
-        if (r < 14) return mul(s, 0.7); // crack
-        return mul(s, r < 30 ? 1.12 : SHADES[r % 4]);
+        if (r < 14) c = mul(s, 0.62); // crack
+        else c = mul(s, r < 30 ? 1.2 : SHADES[r % 4]);
+        break;
       }
       case Bk.LOG: {
         var l = Bk.color(id);
         if (cls === 1) { // bark: vertical striping + grain jitter
-          var stripe = [0.8, 1.02, 0.88, 1.08][i];
-          return mul(l, r < 12 ? stripe * 0.9 : stripe);
+          var stripe = [0.72, 1.06, 0.82, 1.12][i];
+          c = mul(l, r < 12 ? stripe * 0.85 : stripe);
+        } else {
+          var ring = Math.floor(Math.max(Math.abs(i - 1.5), Math.abs(j - 1.5))); // end-grain rings
+          c = mul(l, (ring % 2 ? 0.7 : 1.1) * (r < 12 ? 0.88 : 1));
         }
-        var ring = Math.floor(Math.max(Math.abs(i - 1.5), Math.abs(j - 1.5))); // end-grain rings
-        return mul(l, (ring % 2 ? 0.78 : 1.04) * (r < 12 ? 0.92 : 1));
+        break;
       }
       case Bk.LEAVES: {
         var lv = Bk.color(id);
-        if (r < 18) return mul(lv, 0.6); // depth hole
-        return mul(lv, r < 40 ? 1.18 : SHADES[r % 4]);
+        if (r < 18) c = mul(lv, 0.55); // depth hole
+        else c = mul(lv, r < 40 ? 1.25 : SHADES[r % 4]);
+        break;
       }
       case Bk.SAND: {
         var sa = Bk.color(id);
-        return mul(sa, r < 16 ? 0.85 : r < 30 ? 1.1 : SHADES[r % 4]);
+        c = mul(sa, r < 16 ? 0.8 : r < 30 ? 1.14 : SHADES[r % 4]);
+        break;
       }
       case Bk.PLANKS: {
         var p = Bk.color(id);
-        if (j % 2 === 1) return mul(p, 0.72); // board seam
-        return mul(p, [1.02, 1.1, 0.96][(j >> 1) % 3] * (r < 12 ? 0.94 : 1));
+        if (j % 2 === 1) c = mul(p, 0.68); // board seam
+        else c = mul(p, [1.06, 1.16, 0.92][(j >> 1) % 3] * (r < 12 ? 0.9 : 1));
+        break;
       }
       case Bk.BRICKS: {
-        if (j % 2 === 1) return [0.62, 0.6, 0.58]; // mortar course
-        if (i === (((j >> 1) % 2) ? 1 : 3)) return [0.62, 0.6, 0.58]; // staggered joint
-        return mul(Bk.color(id), SHADES[(h >>> 7) % 4]);
+        if (j % 2 === 1) c = [0.66, 0.64, 0.62]; // mortar course
+        else if (i === (((j >> 1) % 2) ? 1 : 3)) c = [0.66, 0.64, 0.62]; // staggered joint
+        else c = mul(Bk.color(id), SHADES[(h >>> 7) % 4]);
+        break;
       }
-      default: return mul(Bk.color(id), r < 30 ? 0.6 : SHADES[r % 4]); // bedrock
+      default: c = mul(Bk.color(id), r < 30 ? 0.55 : SHADES[r % 4]); // bedrock
     }
+    return [c[0] * hue[0], c[1] * hue[1], c[2] * hue[2]];
   }
 
   // World-space, per-color face batches for the chunks around the player.
@@ -160,7 +180,15 @@ Facraft.voxel = (function() {
       var by = corners[0][1] - (ny > 0 ? 1 : 0);
       var bz = corners[0][2] + oz - (nz > 0 ? 1 : 0);
       var id = Facraft.world.get(w, bx, by, bz);
-      if (!mosaic) { pushQuad(buckets, corners, hexRGB(B().color(id)), ox, oz); continue; }
+      // ponytail: far field = ONE hash-picked mosaic cell per face (no
+      // subdivision) — per-block tonal variation without a seam ring where
+      // the mosaic circle ends; raise MOSAIC before widening this if faces
+      // ever need more than 4x4 near-field detail.
+      if (!mosaic) {
+        var fc = cellColor(id, ny > 0 ? 2 : ny < 0 ? 0 : 1, bx, by, bz, 0, 0);
+        pushQuad(buckets, corners, hex(fc[0], fc[1], fc[2]), ox, oz);
+        continue;
+      }
       emitFace(buckets, corners, ox, oz, id, ny > 0 ? 2 : ny < 0 ? 0 : 1, bx, by, bz);
     }
   }
