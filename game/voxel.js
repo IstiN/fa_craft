@@ -30,9 +30,87 @@ Facraft.voxel = (function() {
     return '#' + c2(r) + c2(g) + c2(b);
   }
 
-  // Per-block checker tint: even top-lit faces stay readable as individual
-  // blocks instead of one flat wash.
-  var CHECKER = 0.07;
+  function hexRGB(c) { return hex(c[0], c[1], c[2]); }
+
+  // ---- illustrated faces ----
+  // The 0.4.126 scene3d mesh node is colors-only (vertices + faces + flat
+  // albedo), so block "textures" are built geometrically: near-field faces
+  // subdivide into a MOSAIC x MOSAIC grid whose cells pick from a
+  // per-block-type palette through a position-seeded hash — deterministic
+  // across frames and runs, varied per block. Equal-color row runs merge
+  // into one quad, so structured faces (planks, bricks, bark) stay cheap.
+  var MOSAIC = 4;
+  var DETAIL_R2 = 30 * 30; // chunk-center distance²: nearer chunks mosaic, the far field stays one flat quad per face (keeps rebuilds tied to the existing chunk-pair cache key)
+  var SHADES = [0.86, 0.95, 1.04, 1.12];
+
+  function h32(a, b, c, d) {
+    var x = (a * 73856093) ^ (b * 19349663) ^ (c * 83492791) ^ ((d | 0) * 2654435761);
+    x = Math.imul(x ^ (x >>> 13), 1274126177);
+    return (x ^ (x >>> 16)) >>> 0;
+  }
+
+  function mul(c, m) { return [c[0] * m, c[1] * m, c[2] * m]; }
+
+  function soil(d, r) {
+    if (r < 16) return mul(d, 0.72); // clod shadow
+    return mul(d, r < 30 ? 1.15 : SHADES[r % 4]);
+  }
+
+  // One mosaic cell's albedo. cls: 0 bottom / 1 side / 2 top; v rows run
+  // bottom→top on side faces (mesh.js corner tables), so j = MOSAIC-1 is the
+  // face's top edge.
+  function cellColor(id, cls, wx, wy, wz, i, j) {
+    var Bk = B();
+    var h = h32(wx, wy, wz, (cls << 6) | (i * MOSAIC + j));
+    var r = h % 100;
+    switch (id) {
+      case Bk.GRASS: {
+        var g = Bk.color(Bk.GRASS);
+        var turf = (cls === 2) || (cls === 1 && (j >= MOSAIC - 1 ||
+          (j === MOSAIC - 2 && (h >>> 7) % 100 < 45))); // turf overhang fringe
+        if (turf) {
+          if (r < 18) return [g[0] * 1.25, g[1] * 1.12, g[2] * 0.7]; // dry blade
+          return mul(g, SHADES[r % 4]);
+        }
+        return soil(Bk.color(Bk.DIRT), r);
+      }
+      case Bk.DIRT: return soil(Bk.color(id), r);
+      case Bk.STONE: {
+        var s = Bk.color(id);
+        if (r < 14) return mul(s, 0.7); // crack
+        return mul(s, r < 30 ? 1.12 : SHADES[r % 4]);
+      }
+      case Bk.LOG: {
+        var l = Bk.color(id);
+        if (cls === 1) { // bark: vertical striping + grain jitter
+          var stripe = [0.8, 1.02, 0.88, 1.08][i];
+          return mul(l, r < 12 ? stripe * 0.9 : stripe);
+        }
+        var ring = Math.floor(Math.max(Math.abs(i - 1.5), Math.abs(j - 1.5))); // end-grain rings
+        return mul(l, (ring % 2 ? 0.78 : 1.04) * (r < 12 ? 0.92 : 1));
+      }
+      case Bk.LEAVES: {
+        var lv = Bk.color(id);
+        if (r < 18) return mul(lv, 0.6); // depth hole
+        return mul(lv, r < 40 ? 1.18 : SHADES[r % 4]);
+      }
+      case Bk.SAND: {
+        var sa = Bk.color(id);
+        return mul(sa, r < 16 ? 0.85 : r < 30 ? 1.1 : SHADES[r % 4]);
+      }
+      case Bk.PLANKS: {
+        var p = Bk.color(id);
+        if (j % 2 === 1) return mul(p, 0.72); // board seam
+        return mul(p, [1.02, 1.1, 0.96][(j >> 1) % 3] * (r < 12 ? 0.94 : 1));
+      }
+      case Bk.BRICKS: {
+        if (j % 2 === 1) return [0.62, 0.6, 0.58]; // mortar course
+        if (i === (((j >> 1) % 2) ? 1 : 3)) return [0.62, 0.6, 0.58]; // staggered joint
+        return mul(Bk.color(id), SHADES[(h >>> 7) % 4]);
+      }
+      default: return mul(Bk.color(id), r < 30 ? 0.6 : SHADES[r % 4]); // bedrock
+    }
+  }
 
   // World-space, per-color face batches for the chunks around the player.
   // Reuses the production chunk mesher verbatim; only the transport differs
@@ -44,7 +122,7 @@ Facraft.voxel = (function() {
     var buckets = {};
     for (var dx = -VIEW_RADIUS; dx <= VIEW_RADIUS; dx++) {
       for (var dz = -VIEW_RADIUS; dz <= VIEW_RADIUS; dz++) {
-        appendChunk(w, pcx + dx, pcz + dz, yMin, yMax, buckets);
+        appendChunk(w, pcx + dx, pcz + dz, yMin, yMax, buckets, player.x, player.z);
       }
     }
     var meshes = [];
@@ -58,27 +136,75 @@ Facraft.voxel = (function() {
     return meshes;
   }
 
-  function appendChunk(w, cx, cz, yMin, yMax, buckets) {
-    var m = M().buildChunk(w, cx, cz); // chunk-local positions, per-vertex colors, quad indices
+  function appendChunk(w, cx, cz, yMin, yMax, buckets, ex, ez) {
+    var m = M().buildChunk(w, cx, cz); // chunk-local positions, quad indices
     var ox = cx * 16, oz = cz * 16;
-    var P = m.positions, C = m.colors, I = m.indices;
+    var P = m.positions, I = m.indices;
+    var mosaic = (cx * 16 + 7.5 - ex) * (cx * 16 + 7.5 - ex) +
+      (cz * 16 + 7.5 - ez) * (cz * 16 + 7.5 - ez) <= DETAIL_R2;
     for (var q = 0; q < I.length; q += 6) {
-      var v0 = I[q] * 3;
-      var vy = P[v0 + 1];
-      if (vy < yMin || vy > yMax) continue;
-      var wx = P[v0] + ox, wz = P[v0 + 2] + oz;
-      var tint = ((wx + wz) & 1) === 0 ? 1 : 1 - CHECKER;
-      var color = hex(C[v0] * tint, C[v0 + 1] * tint, C[v0 + 2] * tint);
-      var bucket = buckets[color];
-      if (!bucket) bucket = buckets[color] = { vertices: [], faces: [] };
-      var base = bucket.vertices.length;
-      // mesh.js quads: indices [b, b+1, b+2, b, b+2, b+3] — corners b..b+3.
-      for (var v = 0; v < 4; v++) {
-        var vi = I[q + (v === 3 ? 5 : v)] * 3;
-        bucket.vertices.push([P[vi] + ox, P[vi + 1], P[vi + 2] + oz]);
-      }
-      bucket.faces.push([base, base + 1, base + 2], [base, base + 2, base + 3]);
+      var v0 = I[q] * 3, v1 = I[q + 1] * 3, v2 = I[q + 2] * 3, v3 = I[q + 5] * 3;
+      if (P[v0 + 1] < yMin || P[v0 + 1] > yMax) continue;
+      var corners = [
+        [P[v0], P[v0 + 1], P[v0 + 2]], [P[v1], P[v1 + 1], P[v1 + 2]],
+        [P[v2], P[v2 + 1], P[v2 + 2]], [P[v3], P[v3 + 1], P[v3 + 2]],
+      ];
+      // face normal from the quad winding (mesh.js CCW corner tables)
+      var ax = corners[1][0] - corners[0][0], ay = corners[1][1] - corners[0][1],
+        az = corners[1][2] - corners[0][2];
+      var ux = corners[3][0] - corners[0][0], uy = corners[3][1] - corners[0][1],
+        uz = corners[3][2] - corners[0][2];
+      var nx = ay * uz - az * uy, ny = az * ux - ax * uz, nz = ax * uy - ay * ux;
+      // the face's own block: one step back along the normal from the corner
+      var bx = corners[0][0] + ox - (nx > 0 ? 1 : 0);
+      var by = corners[0][1] - (ny > 0 ? 1 : 0);
+      var bz = corners[0][2] + oz - (nz > 0 ? 1 : 0);
+      var id = Facraft.world.get(w, bx, by, bz);
+      if (!mosaic) { pushQuad(buckets, corners, hexRGB(B().color(id)), ox, oz); continue; }
+      emitFace(buckets, corners, ox, oz, id, ny > 0 ? 2 : ny < 0 ? 0 : 1, bx, by, bz);
     }
+  }
+
+  function emitFace(buckets, corners, ox, oz, id, cls, wx, wy, wz) {
+    for (var j = 0; j < MOSAIC; j++) {
+      var row = [];
+      for (var i = 0; i < MOSAIC; i++) {
+        var c = cellColor(id, cls, wx, wy, wz, i, j);
+        row.push(hex(c[0], c[1], c[2]));
+      }
+      var i0 = 0;
+      while (i0 < MOSAIC) { // merge equal-color runs: structured faces stay cheap
+        var i1 = i0 + 1;
+        while (i1 < MOSAIC && row[i1] === row[i0]) i1++;
+        pushCell(buckets, corners, ox, oz, row[i0], j, i0, i1);
+        i0 = i1;
+      }
+    }
+  }
+
+  function pushCell(buckets, p, ox, oz, colorHex, j, i0, i1) {
+    var N = MOSAIC, u0 = i0 / N, u1 = i1 / N, v0 = j / N, v1 = (j + 1) / N;
+    var A = [p[1][0] - p[0][0], p[1][1] - p[0][1], p[1][2] - p[0][2]]; // v edge
+    var U = [p[3][0] - p[0][0], p[3][1] - p[0][1], p[3][2] - p[0][2]]; // u edge
+    function pt(u, v) {
+      return [
+        p[0][0] + U[0] * u + A[0] * v,
+        p[0][1] + U[1] * u + A[1] * v,
+        p[0][2] + U[2] * u + A[2] * v,
+      ];
+    }
+    // parent winding preserved: [p0, p1(v-end), p2, p3(u-end)] analogues
+    pushQuad(buckets, [pt(u0, v0), pt(u0, v1), pt(u1, v1), pt(u1, v0)], colorHex, ox, oz);
+  }
+
+  function pushQuad(buckets, vs, colorHex, ox, oz) {
+    var b = buckets[colorHex];
+    if (!b) b = buckets[colorHex] = { vertices: [], faces: [] };
+    var base = b.vertices.length;
+    for (var k = 0; k < 4; k++) {
+      b.vertices.push([vs[k][0] + ox, vs[k][1], vs[k][2] + oz]);
+    }
+    b.faces.push([base, base + 1, base + 2], [base, base + 2, base + 3]);
   }
 
   // Targeted-block marker: a slightly oversized shell in a whitened block
