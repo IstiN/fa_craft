@@ -60,75 +60,95 @@ Facraft.voxel = (function() {
     return mul(d, r < 30 ? 1.18 : SHADES[r % 4]);
   }
 
+  // Per-block-type mosaic cell painters: (id, cls, i, j, r, h) -> [r, g, b].
+  // r = h % 100 is the per-cell jitter roll; h the full hash (spare bits for
+  // stripes). Splitting the old monolithic switch keeps each block's logic
+  // single-purpose and the CRAP gate happy; painting math is unchanged.
+  function grassCell(id, cls, i, j, r, h) {
+    var g = B().color(id);
+    var edge = cls === 2 && (i === 0 || i === MOSAIC - 1 || j === 0 || j === MOSAIC - 1);
+    var turf = (cls === 2) || (cls === 1 && (j >= MOSAIC - 1 ||
+      (j === MOSAIC - 2 && (h >>> 7) % 100 < 45))); // turf overhang fringe
+    if (turf) {
+      if (edge && r < 30) return mul(g, 0.5); // blade notch on the face border
+      if (edge) return mul(g, 0.8); // shaded turf edge
+      if (r < 14) return [g[0] * 1.35, g[1] * 1.1, g[2] * 0.5]; // dry blade
+      if (r < 30) return mul(g, 0.6); // dark tuft
+      return mul(g, SHADES[r % 4]);
+    }
+    return soil(B().color(B().DIRT), r);
+  }
+
+  function dirtCell(id, cls, i, j, r) { return soil(B().color(id), r); }
+
+  function stoneCell(id, cls, i, j, r) {
+    var s = B().color(id);
+    if (r < 14) return mul(s, 0.62); // crack
+    return mul(s, r < 30 ? 1.2 : SHADES[r % 4]);
+  }
+
+  function logCell(id, cls, i, j, r) {
+    var l = B().color(id);
+    if (cls === 1) { // bark: vertical striping + grain jitter
+      var stripe = [0.72, 1.06, 0.82, 1.12][i];
+      return mul(l, r < 12 ? stripe * 0.85 : stripe);
+    }
+    var ring = Math.floor(Math.max(Math.abs(i - 1.5), Math.abs(j - 1.5))); // end-grain rings
+    return mul(l, (ring % 2 ? 0.7 : 1.1) * (r < 12 ? 0.88 : 1));
+  }
+
+  function leavesCell(id, cls, i, j, r) {
+    var lv = B().color(id);
+    if (r < 18) return mul(lv, 0.55); // depth hole
+    return mul(lv, r < 40 ? 1.25 : SHADES[r % 4]);
+  }
+
+  function sandCell(id, cls, i, j, r) {
+    var sa = B().color(id);
+    return mul(sa, r < 16 ? 0.8 : r < 30 ? 1.14 : SHADES[r % 4]);
+  }
+
+  function planksCell(id, cls, i, j, r) {
+    var p = B().color(id);
+    if (j % 2 === 1) return mul(p, 0.68); // board seam
+    return mul(p, [1.06, 1.16, 0.92][(j >> 1) % 3] * (r < 12 ? 0.9 : 1));
+  }
+
+  function bricksCell(id, cls, i, j, r, h) {
+    if (j % 2 === 1) return [0.66, 0.64, 0.62]; // mortar course
+    if (i === (((j >> 1) % 2) ? 1 : 3)) return [0.66, 0.64, 0.62]; // staggered joint
+    return mul(B().color(id), SHADES[(h >>> 7) % 4]);
+  }
+
+  function bedrockCell(id, cls, i, j, r) {
+    return mul(B().color(id), r < 30 ? 0.55 : SHADES[r % 4]);
+  }
+
+  var PAINTERS = null;
+  function painterFor(id) {
+    if (!PAINTERS) {
+      var Bk = B();
+      PAINTERS = {};
+      PAINTERS[Bk.GRASS] = grassCell;
+      PAINTERS[Bk.DIRT] = dirtCell;
+      PAINTERS[Bk.STONE] = stoneCell;
+      PAINTERS[Bk.LOG] = logCell;
+      PAINTERS[Bk.LEAVES] = leavesCell;
+      PAINTERS[Bk.SAND] = sandCell;
+      PAINTERS[Bk.PLANKS] = planksCell;
+      PAINTERS[Bk.BRICKS] = bricksCell;
+    }
+    return PAINTERS[id] || bedrockCell; // unknown ids fall through to bedrock
+  }
+
   // One mosaic cell's albedo. cls: 0 bottom / 1 side / 2 top; v rows run
   // bottom→top on side faces (mesh.js corner tables), so j = MOSAIC-1 is the
   // face's top edge.
   function cellColor(id, cls, wx, wy, wz, i, j) {
-    var Bk = B();
     var h = h32(wx, wy, wz, (cls << 6) | (i * MOSAIC + j));
     var r = h % 100;
     var hue = HUES[h32(wx, wy, wz, 0x5eed) % HUES.length]; // per-block tint
-    var c;
-    switch (id) {
-      case Bk.GRASS: {
-        var g = Bk.color(Bk.GRASS);
-        var edge = cls === 2 && (i === 0 || i === MOSAIC - 1 || j === 0 || j === MOSAIC - 1);
-        var turf = (cls === 2) || (cls === 1 && (j >= MOSAIC - 1 ||
-          (j === MOSAIC - 2 && (h >>> 7) % 100 < 45))); // turf overhang fringe
-        if (turf) {
-          if (edge && r < 30) c = mul(g, 0.5); // blade notch on the face border
-          else if (edge) c = mul(g, 0.8); // shaded turf edge
-          else if (r < 14) c = [g[0] * 1.35, g[1] * 1.1, g[2] * 0.5]; // dry blade
-          else if (r < 30) c = mul(g, 0.6); // dark tuft
-          else c = mul(g, SHADES[r % 4]);
-        } else {
-          c = soil(Bk.color(Bk.DIRT), r);
-        }
-        break;
-      }
-      case Bk.DIRT: c = soil(Bk.color(id), r); break;
-      case Bk.STONE: {
-        var s = Bk.color(id);
-        if (r < 14) c = mul(s, 0.62); // crack
-        else c = mul(s, r < 30 ? 1.2 : SHADES[r % 4]);
-        break;
-      }
-      case Bk.LOG: {
-        var l = Bk.color(id);
-        if (cls === 1) { // bark: vertical striping + grain jitter
-          var stripe = [0.72, 1.06, 0.82, 1.12][i];
-          c = mul(l, r < 12 ? stripe * 0.85 : stripe);
-        } else {
-          var ring = Math.floor(Math.max(Math.abs(i - 1.5), Math.abs(j - 1.5))); // end-grain rings
-          c = mul(l, (ring % 2 ? 0.7 : 1.1) * (r < 12 ? 0.88 : 1));
-        }
-        break;
-      }
-      case Bk.LEAVES: {
-        var lv = Bk.color(id);
-        if (r < 18) c = mul(lv, 0.55); // depth hole
-        else c = mul(lv, r < 40 ? 1.25 : SHADES[r % 4]);
-        break;
-      }
-      case Bk.SAND: {
-        var sa = Bk.color(id);
-        c = mul(sa, r < 16 ? 0.8 : r < 30 ? 1.14 : SHADES[r % 4]);
-        break;
-      }
-      case Bk.PLANKS: {
-        var p = Bk.color(id);
-        if (j % 2 === 1) c = mul(p, 0.68); // board seam
-        else c = mul(p, [1.06, 1.16, 0.92][(j >> 1) % 3] * (r < 12 ? 0.9 : 1));
-        break;
-      }
-      case Bk.BRICKS: {
-        if (j % 2 === 1) c = [0.66, 0.64, 0.62]; // mortar course
-        else if (i === (((j >> 1) % 2) ? 1 : 3)) c = [0.66, 0.64, 0.62]; // staggered joint
-        else c = mul(Bk.color(id), SHADES[(h >>> 7) % 4]);
-        break;
-      }
-      default: c = mul(Bk.color(id), r < 30 ? 0.55 : SHADES[r % 4]); // bedrock
-    }
+    var c = painterFor(id)(id, cls, i, j, r, h);
     return [c[0] * hue[0], c[1] * hue[1], c[2] * hue[2]];
   }
 

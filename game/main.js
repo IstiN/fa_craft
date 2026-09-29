@@ -270,18 +270,24 @@ import './voxel.js';
     });
   }
 
-  function validPayload(raw) {
-    var data = JSON.parse(raw); // throws on garbage (E5)
+  function validEnvelope(data) {
     if (!data || data.v !== 1 || typeof data.seed !== 'number' ||
       !isFinite(data.seed) || Math.floor(data.seed) !== data.seed ||
       !Array.isArray(data.log) || !data.log) throw new Error('bad save');
-    if (data.player !== null && data.player !== undefined) {
-      var p = data.player;
-      if (typeof p !== 'object' || typeof p.x !== 'number' || typeof p.y !== 'number' ||
-        typeof p.z !== 'number' || typeof p.yaw !== 'number' || typeof p.pitch !== 'number') {
-        throw new Error('bad player');
-      }
+  }
+
+  function validPlayer(p) {
+    if (p === null || p === undefined) return;
+    if (typeof p !== 'object' || typeof p.x !== 'number' || typeof p.y !== 'number' ||
+      typeof p.z !== 'number' || typeof p.yaw !== 'number' || typeof p.pitch !== 'number') {
+      throw new Error('bad player');
     }
+  }
+
+  function validPayload(raw) {
+    var data = JSON.parse(raw); // throws on garbage (E5)
+    validEnvelope(data);
+    validPlayer(data.player);
     if (typeof data.dayTime !== 'number' || !isFinite(data.dayTime) || data.dayTime < 0) {
       throw new Error('bad clock');
     }
