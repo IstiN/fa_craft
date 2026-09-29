@@ -20,7 +20,7 @@ import './voxel.js';
 (function() {
   var B = Facraft.blocks, W = Facraft.world, P = Facraft.physics,
     R = Facraft.raycast, S = Facraft.survival, D = Facraft.daynight,
-    IM = Facraft.inputmap, HUD = Facraft.hud, VX = Facraft.voxel;
+    IM = Facraft.inputmap, HUD = Facraft.hud;
 
   var KEY = 'fa-craft:world:v1';
   var SAVE_MS = 5000;
@@ -91,6 +91,7 @@ import './voxel.js';
 
   function render() {
     if (!state.world) return;
+    state.target = pickTarget(); // fresh per render: event-path frames highlight too
     jsr.render(HUD.build(state, jsr.theme));
   }
 
@@ -243,10 +244,9 @@ import './voxel.js';
 
       var pcx = Math.floor(w.player.x / 16), pcz = Math.floor(w.player.z / 16);
       W.ensureArea(w, pcx, pcz, W.LOAD_RADIUS);
-      VX.sync(jsr, w, w.player, eye(), D.sky(w.dayTime));
 
       render();
-      exportNow(); // steady-state: 2 bridge calls/frame (+voxel when attached) — bounded (IT gate)
+      exportNow(); // steady-state: render tree only, zero bridge calls — bounded (IT gate)
     }
     requestAnimationFrame(tick);
   }
@@ -270,18 +270,24 @@ import './voxel.js';
     });
   }
 
-  function validPayload(raw) {
-    var data = JSON.parse(raw); // throws on garbage (E5)
+  function validEnvelope(data) {
     if (!data || data.v !== 1 || typeof data.seed !== 'number' ||
       !isFinite(data.seed) || Math.floor(data.seed) !== data.seed ||
       !Array.isArray(data.log) || !data.log) throw new Error('bad save');
-    if (data.player !== null && data.player !== undefined) {
-      var p = data.player;
-      if (typeof p !== 'object' || typeof p.x !== 'number' || typeof p.y !== 'number' ||
-        typeof p.z !== 'number' || typeof p.yaw !== 'number' || typeof p.pitch !== 'number') {
-        throw new Error('bad player');
-      }
+  }
+
+  function validPlayer(p) {
+    if (p === null || p === undefined) return;
+    if (typeof p !== 'object' || typeof p.x !== 'number' || typeof p.y !== 'number' ||
+      typeof p.z !== 'number' || typeof p.yaw !== 'number' || typeof p.pitch !== 'number') {
+      throw new Error('bad player');
     }
+  }
+
+  function validPayload(raw) {
+    var data = JSON.parse(raw); // throws on garbage (E5)
+    validEnvelope(data);
+    validPlayer(data.player);
     if (typeof data.dayTime !== 'number' || !isFinite(data.dayTime) || data.dayTime < 0) {
       throw new Error('bad clock');
     }

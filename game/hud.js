@@ -13,21 +13,36 @@ Facraft.hud = (function() {
   function slot(state, t, id, index) {
     var selected = state.selected === index;
     var count = state.world.mode === 'creative' ? '∞' : String(state.world.inventory[id] || 0);
+    var c = B().color(id);
     return {
       type: 'container', hotbarIndex: index,
-      width: 40, height: 44,
+      width: 44, height: 56,
       decoration: {
         color: t.surface,
         borderRadius: 6,
-        border: { color: selected ? t.accent : t.border, width: selected ? 2 : 1 },
+        // runtime schema: flat borderColor/borderWidth (nested border:{} is
+        // silently ignored by the decoration parser)
+        borderColor: selected ? t.accent : t.border,
+        borderWidth: selected ? 2 : 1,
       },
       child: {
         type: 'column', mainAxisSize: 'min', children: [
-          { type: 'text', data: B().name(id), style: { fontSize: 10, color: selected ? t.accent : t.text } },
+          { type: 'rect', width: 18, height: 18, fill: swatch(c) }, // mini-block square
+          { type: 'sizedBox', height: 3 },
+          { type: 'text', data: B().name(id), style: { fontSize: 10, color: t.text } },
+          { type: 'sizedBox', height: 1 },
           { type: 'text', data: count, style: { fontSize: 10, color: t.muted } },
         ],
       },
     };
+  }
+
+  function swatch(c) {
+    function cc(v) {
+      var x = Math.max(0, Math.min(255, Math.round(v * 255)));
+      return (x < 16 ? '0' : '') + x.toString(16);
+    }
+    return '#' + cc(c[0]) + cc(c[1]) + cc(c[2]);
   }
 
   function build(state, t) {
@@ -48,16 +63,19 @@ Facraft.hud = (function() {
 
     if (state.notice) {
       overlays.push({
-        type: 'container', positioned: { left: 16, right: 16, bottom: 110 },
-        decoration: { color: t.surface, borderRadius: 8, border: { color: t.borderBright, width: 1 } },
+        type: 'container', positioned: { left: 16, right: 16, bottom: 272 },
+        decoration: { color: t.surface, borderRadius: 8, borderColor: t.borderBright, borderWidth: 1 },
         padding: [10, 6, 10, 6],
         child: { type: 'text', data: state.notice, style: { fontSize: 12, color: t.text } },
       });
     }
     if (state.hint) {
       overlays.push({
-        type: 'container', positioned: { left: 0, right: 0, bottom: 80 },
-        child: { type: 'text', data: 'Drag to look · drag the pad to walk', style: { fontSize: 11, color: t.muted }, width: 320 },
+        // translucent band: readable over any terrain, parked clear above the
+        // joystick circle (top = 168)
+        type: 'container', positioned: { left: 0, right: 0, bottom: 176 },
+        decoration: { color: '#00000066' }, padding: [10, 4, 10, 4],
+        child: { type: 'center', child: { type: 'text', data: 'Drag to look · drag the pad to walk', style: { fontSize: 11, color: t.text }, width: 320 } },
       });
     }
     if (state.debug) {
@@ -70,27 +88,43 @@ Facraft.hud = (function() {
 
     var gameStack = {
       type: 'stack', children: [
-        { // viewport area: drag = look, tap = place; the voxel node paints here
-          type: 'gestureDetector', onTap: 'place', onPanUpdate: 'look',
-          child: { type: 'fill', color: sky.color },
+        { // viewport area: drag = look, tap = place; the scene3d node paints
+          // the real world (software meshes, sky-colored background).
+          // Positioned on all four edges so the scene gets tight full-bleed
+          // constraints (no aspect box).
+          type: 'container', positioned: { left: 0, top: 0, right: 0, bottom: 0 },
+          child: {
+            type: 'gestureDetector', onTap: 'place', onPanUpdate: 'look',
+            child: F.voxel.view(w, w.player, sky, state.target),
+          },
         },
-        { // virtual joystick pad (touch walk)
-          type: 'container', positioned: { left: 16, bottom: 16 },
+        { // virtual joystick pad (touch walk) — parked above the hotbar strip:
+          // at bottom-left it painted over the first hotbar slot
+          type: 'container', positioned: { left: 16, bottom: 72 },
           child: {
             type: 'gestureDetector', onPanUpdate: 'joyMove', onPanEnd: 'joyEnd',
             child: {
               type: 'container', width: 96, height: 96,
-              decoration: { color: t.surfaceAlt, borderRadius: 48, border: { color: t.borderBright, width: 1 } },
+              decoration: { color: t.surfaceAlt, borderRadius: 48, borderColor: t.borderBright, borderWidth: 1 },
               child: { type: 'center', child: { type: 'text', data: 'move', style: { fontSize: 10, color: t.muted } } },
             },
           },
         },
-        { // crosshair
+        { // crosshair: clean symmetric plus (column cross-axis is START in
+          // this runtime — center the vertical bar with explicit spacers)
           type: 'center', child: {
             type: 'column', mainAxisSize: 'min', children: [
-              { type: 'rect', width: 2, height: 14, fill: '#ffffffcc' },
-              { type: 'sizedBox', height: 0 },
+              { type: 'row', mainAxisSize: 'min', children: [
+                { type: 'sizedBox', width: 6, height: 6 },
+                { type: 'rect', width: 2, height: 6, fill: '#ffffffcc' },
+                { type: 'sizedBox', width: 6, height: 6 },
+              ] },
               { type: 'rect', width: 14, height: 2, fill: '#ffffffcc' },
+              { type: 'row', mainAxisSize: 'min', children: [
+                { type: 'sizedBox', width: 6, height: 6 },
+                { type: 'rect', width: 2, height: 6, fill: '#ffffffcc' },
+                { type: 'sizedBox', width: 6, height: 6 },
+              ] },
             ],
           },
         },
@@ -107,7 +141,7 @@ Facraft.hud = (function() {
             ],
           },
         },
-        { // hearts (survival, alive)
+        { // hearts (survival, alive) — beside the joystick, above the hotbar
           type: 'container', positioned: { left: 0, right: 0, bottom: 76 },
           child: { type: 'center', child: { type: 'row', mainAxisSize: 'min', children: hearts } },
         },
@@ -154,7 +188,9 @@ Facraft.hud = (function() {
     rows.push({ type: 'textButton', text: 'Close', onTap: 'closeCraft', style: { foregroundColor: t.muted } });
     return {
       type: 'bottomSheet', craftSheet: true, height: 260, color: t.surface,
-      child: { type: 'padding', padding: [16, 12, 16, 12], child: { type: 'column', children: rows } },
+      // top padding keeps recipe rows clear of the hotbar band while the
+      // runtime's modal slide-up animation settles (goldens freeze it early)
+      child: { type: 'padding', padding: [16, 48, 16, 12], child: { type: 'column', children: rows } },
     };
   }
 
