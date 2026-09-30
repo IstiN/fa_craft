@@ -153,9 +153,11 @@ Facraft.hud = (function() {
     };
     for (var o = 0; o < overlays.length; o++) gameStack.children.push(overlays[o]);
 
+    // ponytail: plain container root — listView collapsed to a ~20px strip
+    // in the unbounded-height web preview host (issue #6); a container
+    // fills the surface, same as voxel-sandbox's root.
     var root = {
-      type: 'listView', shrinkWrap: false, physics: 'never',
-      children: [gameStack],
+      type: 'container', child: gameStack,
     };
 
     if (state.craftOpen) {
