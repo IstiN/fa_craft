@@ -110,6 +110,32 @@ test('voxel adapter (native): aimed block uploads a resident __hl highlight chun
   assert.ok(hl2[hl2.length - 1].positions.every((v) => v === 0), 'degenerate marker mesh');
 });
 
+test('voxel adapter (native): walking evicts off-ring chunks behind the player', async () => {
+  const removed = [];
+  const { jsr, sandbox } = await bootGame({
+    hostHandlers: {
+      'voxel.mesh': () => true,
+      'voxel.camera': () => true,
+      'voxel.chunkRemove': (a) => { removed.push(a.key); return true; },
+    },
+  });
+  const F = sandbox.Facraft;
+  await jsr.pumpFrames(5, 16.6);
+  const up0 = jsr.callCount('hostCall:voxel.mesh');
+  assert.strictEqual(removed.length, 0, 'no eviction before movement');
+  // Teleport 3 chunks east: the old ring's west columns leave the
+  // ring+1 margin and must be evicted; the new ring uploads.
+  F.state.world.player.x += 48;
+  await jsr.pumpFrames(2, 16.6);
+  assert.ok(removed.length > 0, 'off-ring chunks evicted after walking');
+  assert.ok(jsr.callCount('hostCall:voxel.mesh') > up0, 'new ring uploaded');
+  // Walking back re-uploads the evicted chunks (world state replays edits).
+  const up1 = jsr.callCount('hostCall:voxel.mesh');
+  F.state.world.player.x -= 48;
+  await jsr.pumpFrames(2, 16.6);
+  assert.ok(jsr.callCount('hostCall:voxel.mesh') > up1, 'evicted chunks re-upload on return');
+});
+
 test('voxel adapter (legacy fallback): scene3d viewport, meshes cached while clean', async () => {
   const { jsr, sandbox } = await bootGame({ voxelNative: false });
   const F = sandbox.Facraft;

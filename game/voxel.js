@@ -362,6 +362,11 @@ Facraft.voxel = (function() {
 
   // Upload the chunks of the view ring that are new or dirty. Dirty chunks
   // outside the ring stay marked and upload when the ring reaches them.
+  // When the player crosses a chunk boundary, chunks beyond the ring+1
+  // margin are evicted (voxel.chunkRemove) so long walks do not grow the
+  // resident set — and the per-frame painter triangle count — forever.
+  var lastEvictPcx = null, lastEvictPcz = null;
+
   function sync(w, player, prof) {
     if (!isNative()) return;
     var pcx = Math.floor(player.x / 16), pcz = Math.floor(player.z / 16);
@@ -371,6 +376,18 @@ Facraft.voxel = (function() {
         if (uploaded[key] && !w.dirty.has(key)) continue;
         uploadChunk(w, cx, cz, prof);
         w.dirty.delete(key);
+      }
+    }
+    if (pcx !== lastEvictPcx || pcz !== lastEvictPcz) {
+      lastEvictPcx = pcx; lastEvictPcz = pcz;
+      for (var key in uploaded) {
+        var parts = key.split(',');
+        var kx = parseInt(parts[0], 10), kz = parseInt(parts[1], 10);
+        if (Math.abs(kx - pcx) > VIEW_RADIUS + 1 ||
+            Math.abs(kz - pcz) > VIEW_RADIUS + 1) {
+          push('voxel.chunkRemove', { id: NATIVE_ID, key: key });
+          delete uploaded[key];
+        }
       }
     }
   }
