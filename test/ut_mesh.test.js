@@ -28,7 +28,7 @@ test('mesh: a lone block emits 6 faces, 24 verts, 36 indices', async () => {
   assert.strictEqual(m.indices.length, 36, '6 indices per face');
 });
 
-test('mesh: buried blocks cull — a 3×3×3 cube shows only its 54 shell faces', async () => {
+test('mesh: buried blocks cull — a 3×3×3 cube shows only its shell (greedy-merged)', async () => {
   const { F } = await loadNamespace(MODS);
   const w = stubWorld(F);
   for (let x = 4; x <= 6; x++) {
@@ -37,7 +37,54 @@ test('mesh: buried blocks cull — a 3×3×3 cube shows only its 54 shell faces'
     }
   }
   const m = F.mesh.buildChunk(w, 0, 0);
-  assert.strictEqual(facesOf(m), 54, 'cube shell faces only, got ' + facesOf(m));
+  // Greedy merge: each 3x3 same-color side collapses to ONE quad.
+  assert.strictEqual(facesOf(m), 6, 'six merged side quads, got ' + facesOf(m));
+  // …but the visible surface AREA must be exactly the 54 unit faces.
+  assert.strictEqual(totalArea(m), 54, 'merged surface area == shell area');
+});
+
+// Sum of quad areas via the two triangle cross products.
+function totalArea(mesh) {
+  const P = mesh.positions, I = mesh.indices;
+  let area = 0;
+  for (let q = 0; q < I.length; q += 3) {
+    const a = I[q] * 3, b = I[q + 1] * 3, c = I[q + 2] * 3;
+    const ux = P[b] - P[a], uy = P[b + 1] - P[a + 1], uz = P[b + 2] - P[a + 2];
+    const vx = P[c] - P[a], vy = P[c + 1] - P[a + 1], vz = P[c + 2] - P[a + 2];
+    const cx = uy * vz - uz * vy, cy = uz * vx - ux * vz, cz = ux * vy - uy * vx;
+    area += Math.sqrt(cx * cx + cy * cy + cz * cz) / 2;
+  }
+  return area;
+}
+
+test('mesh: greedy merge keeps outward winding (backface cull contract)', async () => {
+  const { F } = await loadNamespace(MODS);
+  const w = stubWorld(F);
+  F.world.setBlock(w, 8, 40, 8, F.blocks.STONE);
+  const m = F.mesh.buildChunk(w, 0, 0);
+  const P = m.positions, I = m.indices;
+  for (let q = 0; q < I.length; q += 6) {
+    const a = I[q] * 3, b = I[q + 1] * 3, c = I[q + 2] * 3;
+    const ux = P[b] - P[a], uy = P[b + 1] - P[a + 1], uz = P[b + 2] - P[a + 2];
+    const vx = P[c] - P[a], vy = P[c + 1] - P[a + 1], vz = P[c + 2] - P[a + 2];
+    const nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx;
+    // Face center minus block center must align with the normal (outward).
+    const cxm = (P[a] + P[I[q + 2] * 3]) / 2 - 8.5;
+    const cym = (P[a + 1] + P[I[q + 2] * 3 + 1]) / 2 - 40.5;
+    const czm = (P[a + 2] + P[I[q + 2] * 3 + 2]) / 2 - 8.5;
+    assert.ok(nx * cxm + ny * cym + nz * czm > 0, 'quad ' + q / 6 + ' faces outward');
+  }
+});
+
+test('mesh: flat 16×16 plate merges each side into one quad', async () => {
+  const { F } = await loadNamespace(MODS);
+  const w = stubWorld(F);
+  for (let x = 0; x < 16; x++) {
+    for (let z = 0; z < 16; z++) F.world.setBlock(w, x, 40, z, F.blocks.STONE);
+  }
+  const m = F.mesh.buildChunk(w, 0, 0);
+  assert.strictEqual(facesOf(m), 6, 'one quad per plate side, got ' + facesOf(m));
+  assert.strictEqual(totalArea(m), 16 * 16 * 2 + 16 * 4, 'plate surface area');
 });
 
 test('mesh: chunk-local coordinates in flat arrays, origin exported', async () => {

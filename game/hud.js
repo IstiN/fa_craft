@@ -64,6 +64,7 @@ Facraft.hud = (function() {
     if (state.notice) {
       overlays.push({
         type: 'container', positioned: { left: 16, right: 16, bottom: 272 },
+        ignorePointer: true,
         decoration: { color: t.surface, borderRadius: 8, borderColor: t.borderBright, borderWidth: 1 },
         padding: [10, 6, 10, 6],
         child: { type: 'text', data: state.notice, style: { fontSize: 12, color: t.text } },
@@ -74,6 +75,7 @@ Facraft.hud = (function() {
         // translucent band: readable over any terrain, parked clear above the
         // joystick circle (top = 168)
         type: 'container', positioned: { left: 0, right: 0, bottom: 176 },
+        ignorePointer: true, // labels must never eat look-drags (runtime >=0.4.133)
         decoration: { color: '#00000066' }, padding: [10, 4, 10, 4],
         child: { type: 'center', child: { type: 'text', data: 'Drag to look · drag the pad to walk', style: { fontSize: 11, color: t.text }, width: 320 } },
       });
@@ -81,6 +83,7 @@ Facraft.hud = (function() {
     if (state.debug) {
       overlays.push({
         type: 'container', positioned: { left: 8, top: 8 },
+        ignorePointer: true,
         decoration: { color: '#00000088', borderRadius: 4 }, padding: [6, 4, 6, 4],
         child: { type: 'text', debugOverlay: true, lines: debugLines(state), data: debugLines(state).join('\n'), style: { fontSize: 10, color: '#a7f3d0' } },
       });
@@ -111,9 +114,23 @@ Facraft.hud = (function() {
             },
           },
         },
+        { // jump pad (touch): hold to hop — right-bottom, mirrors the joystick
+          type: 'container', positioned: { right: 16, bottom: 72 },
+          child: {
+            type: 'gestureDetector', onTapDown: 'jumpDown', onTapUp: 'jumpUp',
+            onPanEnd: 'jumpUp',
+            child: {
+              type: 'container', width: 96, height: 96,
+              decoration: { color: t.surfaceAlt, borderRadius: 48, borderColor: t.borderBright, borderWidth: 1 },
+              child: { type: 'center', child: { type: 'text', data: 'jump', style: { fontSize: 10, color: t.muted } } },
+            },
+          },
+        },
         { // crosshair: clean symmetric plus (column cross-axis is START in
-          // this runtime — center the vertical bar with explicit spacers)
-          type: 'center', child: {
+          // this runtime — center the vertical bar with explicit spacers).
+          // ignorePointer: look-drags start at screen center — the crosshair
+          // must never eat them.
+          type: 'center', ignorePointer: true, child: {
             type: 'column', mainAxisSize: 'min', children: [
               { type: 'row', mainAxisSize: 'min', children: [
                 { type: 'sizedBox', width: 6, height: 6 },

@@ -374,3 +374,14 @@ function countHearts(tree) {
   })(tree);
   return n;
 }
+
+test('input: jump pad (touch) holds jump and lifts the player', async () => {
+  const { jsr, sandbox } = await bootGame();
+  const F = sandbox.Facraft;
+  await jsr.pumpFrames(10, 16.6); // settle on the ground
+  const y0 = F.state.world.player.y;
+  jsr.fire('jumpDown', {});
+  await jsr.pumpFrames(10, 16.6);
+  jsr.fire('jumpUp', {});
+  assert.ok(F.state.world.player.y > y0, 'jump pad lifts the player');
+});

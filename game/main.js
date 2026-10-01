@@ -222,6 +222,10 @@ import './voxel.js';
 
   function onJoyEnd() { joy.active = false; joy.x = 0; joy.z = 0; }
 
+  // Touch jump pad: hold-to-hop — physics reads input.jump every step.
+  function onJumpDown() { held.jumpPad = true; }
+  function onJumpUp() { held.jumpPad = false; }
+
   function onPointerLock(payload) {
     // reserved surface for the upstream pointer-lock input PR (AC7):
     // when the host engages the lock the drag hint goes away; on loss it
@@ -236,6 +240,7 @@ import './voxel.js';
     craftRecipe: onCraftRecipe, fly: onFly, mode: onMode,
     respawn: onRespawn, debug: function() { state.debug = !state.debug; },
     look: onLook, scrollLook: onScrollLook, joyMove: onJoyMove, joyEnd: onJoyEnd,
+    jumpDown: onJumpDown, jumpUp: onJumpUp,
     pointerLock: onPointerLock,
   };
 
@@ -272,7 +277,8 @@ import './voxel.js';
       var input = {
         forward: held.forward === true, back: held.back === true,
         left: held.left === true, right: held.right === true,
-        jump: held.jump === true, sneak: held.sneak === true,
+        jump: held.jump === true || held.jumpPad === true,
+        sneak: held.sneak === true,
         sprint: held.sprint === true,
         moveS: joy.active ? joy.x : 0, moveF: joy.active ? joy.z : 0,
       };
