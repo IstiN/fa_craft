@@ -136,6 +136,14 @@ test('voxel adapter (native): walking evicts off-ring chunks behind the player',
   assert.ok(jsr.callCount('hostCall:voxel.mesh') > up1, 'evicted chunks re-upload on return');
 });
 
+test('input: viewport wires drag-look AND trackpad scroll-look', async () => {
+  const { jsr } = await bootGame();
+  await jsr.pumpFrames(2, 16.6);
+  const gd = findNode(jsr.lastTree, (n) => n.type === 'gestureDetector' && n.onPanUpdate === 'look');
+  assert.ok(gd, 'viewport gesture area present');
+  assert.strictEqual(gd.onScroll, 'look', 'two-finger trackpad swipe maps to look');
+});
+
 test('voxel adapter (legacy fallback): scene3d viewport, meshes cached while clean', async () => {
   const { jsr, sandbox } = await bootGame({ voxelNative: false });
   const F = sandbox.Facraft;

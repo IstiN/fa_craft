@@ -88,13 +88,14 @@ Facraft.hud = (function() {
 
     var gameStack = {
       type: 'stack', children: [
-        { // viewport area: drag = look, tap = place; the scene3d node paints
-          // the real world (software meshes, sky-colored background).
-          // Positioned on all four edges so the scene gets tight full-bleed
-          // constraints (no aspect box).
+        { // viewport area: drag = look, tap = place; the voxel node paints
+          // the world from bridge-resident chunk buffers (I4). onScroll
+          // routes two-finger trackpad swipes into the same look action
+          // (pointer scroll signals are not drags — runtime >=0.4.131).
           type: 'container', positioned: { left: 0, top: 0, right: 0, bottom: 0 },
           child: {
             type: 'gestureDetector', onTap: 'place', onPanUpdate: 'look',
+            onScroll: 'look',
             child: F.voxel.view(w, w.player, sky, state.target),
           },
         },
