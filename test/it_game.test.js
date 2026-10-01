@@ -30,13 +30,21 @@ test('boot: fresh world publishes observable state (exportState contract)', asyn
   assert.ok(sandbox.Facraft.state.world, 'world booted');
 });
 
-test('loop: rAF advances sim, day clock, and renders every frame', async () => {
+test('loop: rAF advances sim and day clock; HUD renders only on change (native)', async () => {
   const { jsr } = await bootGame();
   const s0 = jsr.exported().dayTime;
-  const rendersBefore = jsr.callCount('render');
- await jsr.pumpFrames(30, 16.6);
+  await jsr.pumpFrames(30, 16.6);
   assert.ok(jsr.exported().dayTime > s0, 'day time advances');
-  assert.strictEqual(jsr.callCount('render') - rendersBefore, 30, 'one render per frame');
+  // Native path: the viewport node is constant and the HUD is signature-
+  // gated, so idle frames mostly skip jsr.render — but SOMETHING settles
+  // in the first frames (fps smoothing, day bucket), so renders are > 0.
+  const renders = jsr.callCount('render');
+  assert.ok(renders > 0, 'settling frames render');
+  assert.ok(renders < 34, 'idle frames are gated: ' + renders + ' renders for ~30 frames');
+  jsr.fire('hotbar', { slot: 3 }); // a real state change must render immediately
+  const before = jsr.callCount('render');
+  jsr.fire('hotbar', { slot: 4 });
+  assert.ok(jsr.callCount('render') > before, 'state change forces a render');
 });
 
 test('bridge budget: per-frame outbound calls stay bounded (IT)', async () => {
@@ -73,7 +81,13 @@ test('voxel adapter (native): voxel node, one mesh upload per chunk, camera per 
   const cam0 = jsr.callCount('hostCall:voxel.camera');
   await jsr.pumpFrames(20, 16.6);
   assert.strictEqual(meshes.length, up0, 'no re-upload while the world is clean');
-  assert.strictEqual(jsr.callCount('hostCall:voxel.camera') - cam0, 20, 'one camera push per frame');
+  const idleCam = jsr.callCount('hostCall:voxel.camera') - cam0;
+  assert.ok(idleCam <= 20, 'camera pushes are quantized, not per frame');
+  // Moving the eye must produce a camera push within a couple of frames.
+  F.state.world.player.yaw += 0.5;
+  await jsr.pumpFrames(3, 16.6);
+  assert.ok(jsr.callCount('hostCall:voxel.camera') > cam0 + idleCam,
+    'eye movement pushes a fresh camera');
   F.world.setBlock(F.state.world, 0, Math.floor(F.state.world.player.y) - 1, 1, F.blocks.BRICKS);
   await jsr.pumpFrames(1, 16.6);
   // The edit dirties its chunk (plus the west neighbor: x=0 is a chunk
@@ -141,7 +155,34 @@ test('input: viewport wires drag-look AND trackpad scroll-look', async () => {
   await jsr.pumpFrames(2, 16.6);
   const gd = findNode(jsr.lastTree, (n) => n.type === 'gestureDetector' && n.onPanUpdate === 'look');
   assert.ok(gd, 'viewport gesture area present');
-  assert.strictEqual(gd.onScroll, 'look', 'two-finger trackpad swipe maps to look');
+  assert.strictEqual(gd.onScroll, 'scrollLook', 'trackpad swipe maps to the inverted-look action');
+});
+
+test('input: trackpad scroll looks the SAME direction as drag (inverted deltas)', async () => {
+  const { jsr, sandbox } = await bootGame();
+  const F = sandbox.Facraft;
+  await jsr.pumpFrames(1, 16.6);
+  const yaw0 = F.state.world.player.yaw;
+  jsr.fire('look', { dx: 30, dy: 0 }); // drag right
+  const dragDelta = F.state.world.player.yaw - yaw0;
+  jsr.fire('scrollLook', { dx: -30, dy: 0 }); // natural-scroll fingers right
+  const scrollDelta = F.state.world.player.yaw - yaw0 - dragDelta;
+  assert.ok(Math.sign(dragDelta) === Math.sign(scrollDelta),
+    'scroll and drag rotate the same way for the same finger direction');
+});
+
+test('input: joystick stick offset comes from pan POSITION, not per-event deltas', async () => {
+  const { jsr, sandbox } = await bootGame();
+  const F = sandbox.Facraft;
+  await jsr.pumpFrames(1, 16.6);
+  const p0 = { x: F.state.world.player.x, z: F.state.world.player.z };
+  // Stick dragged to the top edge of the 96x96 pad: localPosition y ~ 8.
+  jsr.fire('joyMove', { x: 48, y: 8 });
+  await jsr.pumpFrames(30, 16.6);
+  jsr.fire('joyEnd');
+  const dz = F.state.world.player.z - p0.z;
+  const dx = F.state.world.player.x - p0.x;
+  assert.ok(Math.hypot(dx, dz) > 0.5, 'full-deflection stick actually walks: ' + Math.hypot(dx, dz));
 });
 
 test('voxel adapter (legacy fallback): scene3d viewport, meshes cached while clean', async () => {

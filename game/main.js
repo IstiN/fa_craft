@@ -42,6 +42,8 @@ import './voxel.js';
   var joy = { active: false, x: 0, z: 0 };
   var lastFrame = 0;
   var bootReady = false;
+  var lastHudSig = '';
+  var lastCamKey = '';
 
   // Lightweight profiler: windowed frame-cost counters, exported via
   // exportState and dumped to the console every 300 frames. This is how a
@@ -105,9 +107,26 @@ import './voxel.js';
     });
   }
 
+  // Signature of everything the HUD tree can express. Native mode renders
+  // a CONSTANT viewport node ({type:'voxel'}) — when nothing HUD-visible
+  // changed, re-sending the tree is pure bridge cost, so render() skips.
+  // (Legacy scene3d mode is excluded: its camera lives INSIDE the tree and
+  // must follow the eye every frame.)
+  function hudSig() {
+    var w = state.world, t = state.target, th = jsr.theme;
+    return Math.round(state.fps) + '|' + w.health + '|' + w.dead + '|' +
+      state.selected + '|' + state.notice + '|' + state.craftOpen + '|' +
+      state.debug + '|' + state.hint + '|' + Math.floor(w.dayTime) + '|' +
+      (t && t.hit ? t.x + ',' + t.y + ',' + t.z : '-') + '|' +
+      JSON.stringify(w.inventory) + '|' + th.isDark + '|' + th.bg + '|' + th.accent;
+  }
+
   function render() {
     if (!state.world) return;
     state.target = pickTarget(); // fresh per render: event-path frames highlight too
+    var sig = hudSig();
+    if (sig === lastHudSig && Facraft.voxel.isNative()) return;
+    lastHudSig = sig;
     jsr.render(HUD.build(state, jsr.theme));
   }
 
@@ -181,11 +200,23 @@ import './voxel.js';
     state.world.player.pitch = Math.max(-PITCH_MAX, Math.min(PITCH_MAX, state.world.player.pitch + look.dpitch));
   }
 
+  // Trackpad two-finger swipe / wheel: scroll deltas follow CONTENT-scroll
+  // semantics (opposite sign to drag deltas, and the OS natural-scrolling
+  // setting applies), so invert before feeding the drag-look mapping.
+  function onScrollLook(payload) {
+    var dx = payload && typeof payload.dx === 'number' ? payload.dx : 0;
+    var dy = payload && typeof payload.dy === 'number' ? payload.dy : 0;
+    onLook({ dx: -dx, dy: -dy });
+  }
+
   function onJoyMove(payload) {
     joy.active = true;
-    var jx = payload && typeof payload.dx === 'number' ? payload.dx : 0;
-    var jy = payload && typeof payload.dy === 'number' ? payload.dy : 0;
-    var m = IM.joystickMove(jx, jy);
+    // The pad is 96x96: pan localPosition (x, y) minus the pad center is
+    // the stick offset. (dx/dy are PER-EVENT deltas — using them as the
+    // stick vector scaled movement to ~4% and read as "move is broken".)
+    var px = payload && typeof payload.x === 'number' ? payload.x : 48;
+    var py = payload && typeof payload.y === 'number' ? payload.y : 48;
+    var m = IM.joystickMove(px - 48, py - 48);
     joy.x = m.x; joy.z = m.z;
   }
 
@@ -204,7 +235,7 @@ import './voxel.js';
     craft: onCraft, closeCraft: function() { state.craftOpen = false; },
     craftRecipe: onCraftRecipe, fly: onFly, mode: onMode,
     respawn: onRespawn, debug: function() { state.debug = !state.debug; },
-    look: onLook, joyMove: onJoyMove, joyEnd: onJoyEnd,
+    look: onLook, scrollLook: onScrollLook, joyMove: onJoyMove, joyEnd: onJoyEnd,
     pointerLock: onPointerLock,
   };
 
@@ -270,7 +301,18 @@ import './voxel.js';
       var m0 = Date.now();
       Facraft.voxel.sync(w, w.player, prof);
       Facraft.voxel.highlight(w, state.target);
-      Facraft.voxel.camera(w, w.player, D.sky(w.dayTime));
+      // Camera pushes wake a full scene repaint — push only when the eye
+      // state actually moved (quantized to ~1/64 block / ~1/256 rad), so
+      // standing still costs ZERO paints while look stays per-event
+      // responsive (a time gate would add visible drag latency).
+      var cp = w.player;
+      var camKey = Math.round(cp.x * 64) + '|' + Math.round(cp.y * 64) + '|' +
+        Math.round(cp.z * 64) + '|' + Math.round(cp.yaw * 256) + '|' +
+        Math.round(cp.pitch * 256) + '|' + Math.floor(w.dayTime * 2);
+      if (camKey !== lastCamKey) {
+        lastCamKey = camKey;
+        Facraft.voxel.camera(w, w.player, D.sky(w.dayTime));
+      }
       prof.meshMs += Date.now() - m0;
 
       // exportState every frame: the payload is small (scalars + inventory
