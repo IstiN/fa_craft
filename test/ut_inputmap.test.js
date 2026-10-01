@@ -7,7 +7,7 @@ const MODS = ['game/inputmap.js'];
 
 test('inputmap: every movement/action verb has at least one key binding', async () => {
   const { F } = await loadNamespace(MODS);
-  const required = ['forward', 'back', 'left', 'right', 'jump', 'sneak', 'sprint', 'fly', 'craft', 'debug'];
+  const required = ['forward', 'back', 'left', 'right', 'jump', 'sneak', 'sprint', 'fly', 'craft', 'debug', 'break', 'place'];
   for (let slot = 1; slot <= 8; slot++) required.push('hotbar' + slot);
   const mapped = new Set();
   for (const k of Object.keys(F.inputmap.KEY_ACTIONS)) mapped.add(F.inputmap.KEY_ACTIONS[k]);

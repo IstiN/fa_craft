@@ -10,6 +10,7 @@ Facraft.inputmap = (function() {
     'space': 'jump',
     'shiftLeft': 'sneak',
     'controlLeft': 'sprint',
+    'q': 'break', 'e': 'place', // mouse-free mining/building on desktops
     'f': 'fly', 'c': 'craft', 'g': 'mode', 'f3': 'debug',
     'digit1': 'hotbar1', 'digit2': 'hotbar2', 'digit3': 'hotbar3', 'digit4': 'hotbar4',
     'digit5': 'hotbar5', 'digit6': 'hotbar6', 'digit7': 'hotbar7', 'digit8': 'hotbar8',
