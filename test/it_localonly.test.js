@@ -33,8 +33,15 @@ test('I2: byte-scan of outbound bridge surface — only the allow-list', () => {
   }
 });
 
-test('I2: voxel adapter rides the render tree — zero hostCall game traffic (I1)', () => {
+test('I2: game bridge traffic uses only generic voxel.* hostCalls (I1)', () => {
   const src = gameSourceText();
-  const names = src.match(/hostCall\(\s*'([^']+)'/g) || [];
-  assert.strictEqual(names.length, 0, 'voxel adapter must not use hostCall: ' + names);
+  // I4: the voxel node port moved chunk/camera transport to bridge-owned
+  // voxel.* hostCalls. The I1 invariant stands — every hostCall name must
+  // be a generic voxel capability, never a fa-craft-specific channel.
+  const names = (src.match(/hostCall\(\s*'([^']+)'/g) || [])
+    .map((m) => m.match(/'([^']+)'/)[1]);
+  assert.ok(names.length > 0, 'the native voxel path actually uses hostCall');
+  for (const n of names) {
+    assert.ok(n.startsWith('voxel.'), 'only voxel.* hostCalls allowed, got: ' + n);
+  }
 });

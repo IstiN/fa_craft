@@ -41,8 +41,17 @@ import './voxel.js';
   var held = {};
   var joy = { active: false, x: 0, z: 0 };
   var lastFrame = 0;
-  var lastExportBucket = -1;
   var bootReady = false;
+
+  // Lightweight profiler: windowed frame-cost counters, exported via
+  // exportState and dumped to the console every 300 frames. This is how a
+  // host (or the CLI) sees WHERE frames are slow (hud render vs mesh work)
+  // and how much geometry crossed the bridge.
+  var prof = {
+    frames: 0, hudMs: 0, meshMs: 0, camCalls: 0,
+    uploads: 0, meshBytes: 0,
+  };
+  Facraft.prof = prof;
 
   function hotbarBlocks() { return HUD.hotbarBlocks(); }
   Facraft.hotbarSlotOf = function(blockId) {
@@ -86,6 +95,13 @@ import './voxel.js';
       craftOpen: state.craftOpen,
       debug: state.debug,
       fps: Math.round(state.fps),
+      prof: {
+        native: Facraft.voxel.isNative(),
+        hudMs: Math.round((prof.hudMs / Math.max(1, prof.frames)) * 10) / 10,
+        meshMs: Math.round((prof.meshMs / Math.max(1, prof.frames)) * 10) / 10,
+        uploads: prof.uploads,
+        meshKB: Math.round(prof.meshBytes / 1024),
+      },
     });
   }
 
@@ -245,8 +261,32 @@ import './voxel.js';
       var pcx = Math.floor(w.player.x / 16), pcz = Math.floor(w.player.z / 16);
       W.ensureArea(w, pcx, pcz, W.LOAD_RADIUS);
 
+      var h0 = Date.now();
       render();
-      exportNow(); // steady-state: render tree only, zero bridge calls — bounded (IT gate)
+      prof.hudMs += Date.now() - h0;
+
+      // Native voxel path (I4): dirty/new chunks + aim highlight + camera.
+      // Runs after render() so the highlight tracks the fresh raycast target.
+      var m0 = Date.now();
+      Facraft.voxel.sync(w, w.player, prof);
+      Facraft.voxel.highlight(w, state.target);
+      Facraft.voxel.camera(w, w.player, D.sky(w.dayTime));
+      prof.meshMs += Date.now() - m0;
+
+      // exportState every frame: the payload is small (scalars + inventory
+      // map) and CLI snapshots must stay live — the bridge cost that killed
+      // the old path was the megabyte mesh JSON, not small calls.
+      exportNow();
+
+      prof.frames++;
+      if (prof.frames % 300 === 0) {
+        console.log('[facraft] fps=' + Math.round(state.fps) +
+          ' hud=' + (prof.hudMs / prof.frames).toFixed(1) + 'ms' +
+          ' mesh=' + (prof.meshMs / prof.frames).toFixed(1) + 'ms' +
+          ' uploads=' + prof.uploads + ' meshKB=' + Math.round(prof.meshBytes / 1024) +
+          ' native=' + Facraft.voxel.isNative());
+        prof.frames = 0; prof.hudMs = 0; prof.meshMs = 0; prof.camCalls = 0;
+      }
     }
     requestAnimationFrame(tick);
   }
@@ -336,6 +376,7 @@ import './voxel.js';
   jsr.onEvent(handleEvent); // registered before first render
   jsr.onKey(handleKey);
   jsr.setTitle('⛏ Fa Craft');
+  Facraft.voxel.probe(); // I4: async capability probe — native path flips on
   setInterval(save, SAVE_MS);
   jsr.storage.get(KEY).then(hydrate, function() { newWorld(true); start(); });
 })();

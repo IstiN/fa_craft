@@ -287,10 +287,150 @@ Facraft.voxel = (function() {
     return { vertices: V, faces: faces, color: hex(c[0], c[1], c[2]) };
   }
 
-  // The scene3d viewport node for the current frame, or null before the
-  // first geometry lands (HUD falls back to the sky fill). Camera follows
-  // the player eye every frame; meshes are the cached identity payload.
+  // ---- native voxel node (I4) ----
+  // js_widget_runtime 0.4.127+ owns a bridge-side voxel world: chunk buffers
+  // cross the bridge ONCE per chunk (and per edit) via voxel.mesh and the
+  // per-frame traffic shrinks to one tiny voxel.camera call. The legacy
+  // scene3d path below re-sent every chunk's full mesh JSON every frame —
+  // on the web worker build that multi-hundred-KB per-frame payload is what
+  // made walking crawl. view() branches on the probe result.
+  var NATIVE_ID = 'fa-craft';
+  var nativeOn = null; // null = probe in flight; true/false once it lands
+  var uploaded = {};   // chunk key -> true (re-upload driven by w.dirty)
+  var hlCell = '';     // last uploaded highlight cell key
+
+  function isNative() { return nativeOn === true; }
+
+  function probe() {
+    jsr.hostCall('voxel.attach', { id: NATIVE_ID }).then(
+      function() { nativeOn = true; },
+      function() { nativeOn = false; }
+    );
+  }
+
+  // Fire-and-forget with a swallowed rejection: the bridge resolves voxel.*
+  // itself, but a rejecting/absent handler must never wedge the game loop
+  // (and the test harness counts calls without registering handlers).
+  function push(name, args) {
+    jsr.hostCall(name, args).then(function() {}, function() {});
+  }
+
+  // Per-face shading without the legacy path's 16x mosaic subdivision:
+  // block hue jitter + a top/side/bottom brightness class, applied to the
+  // four corner colors of every quad buildChunk emitted. Runs once per
+  // chunk upload, not per frame.
+  function shadeFaces(m, cx, cz) {
+    var P = m.positions, C = m.colors, I = m.indices;
+    var CLS = [0.62, 0.82, 1.0]; // bottom, side, top
+    for (var q = 0; q < I.length; q += 6) {
+      var v0 = I[q] * 3, v1 = I[q + 1] * 3, v3 = I[q + 5] * 3;
+      var ax = P[v1] - P[v0], ay = P[v1 + 1] - P[v0 + 1], az = P[v1 + 2] - P[v0 + 2];
+      var ux = P[v3] - P[v0], uy = P[v3 + 1] - P[v0 + 1], uz = P[v3 + 2] - P[v0 + 2];
+      var nx = ay * uz - az * uy, ny = az * ux - ax * uz, nz = ax * uy - ay * ux;
+      var wx = Math.round(cx * 16 + P[v0] - (nx > 0 ? 1 : 0));
+      var wy = Math.round(P[v0 + 1] - (ny > 0 ? 1 : 0));
+      var wz = Math.round(cz * 16 + P[v0 + 2] - (nz > 0 ? 1 : 0));
+      var hue = HUES[h32(wx, wy, wz, 0x5eed) % HUES.length];
+      var s = CLS[ny > 0 ? 2 : ny < 0 ? 0 : 1];
+      var vs = [I[q], I[q + 1], I[q + 2], I[q + 5]];
+      for (var v = 0; v < 4; v++) {
+        var b = vs[v] * 3;
+        C[b] = Math.min(1, C[b] * hue[0] * s);
+        C[b + 1] = Math.min(1, C[b + 1] * hue[1] * s);
+        C[b + 2] = Math.min(1, C[b + 2] * hue[2] * s);
+      }
+    }
+  }
+
+  function uploadChunk(w, cx, cz, prof) {
+    var m = M().buildChunk(w, cx, cz);
+    shadeFaces(m, cx, cz);
+    push('voxel.mesh', {
+      id: NATIVE_ID, key: cx + ',' + cz,
+      origin: m.origin, positions: m.positions,
+      colors: m.colors, indices: m.indices,
+    });
+    uploaded[cx + ',' + cz] = true;
+    // ensureArea re-marks every chunk missing from w.meshes each frame —
+    // a sentinel entry stops the loop (the legacy renderer never fills it).
+    w.meshes.set(cx + ',' + cz, true);
+    if (prof) {
+      prof.uploads++;
+      prof.meshBytes += (m.positions.length + m.colors.length + m.indices.length) * 4;
+    }
+  }
+
+  // Upload the chunks of the view ring that are new or dirty. Dirty chunks
+  // outside the ring stay marked and upload when the ring reaches them.
+  function sync(w, player, prof) {
+    if (!isNative()) return;
+    var pcx = Math.floor(player.x / 16), pcz = Math.floor(player.z / 16);
+    for (var dx = -VIEW_RADIUS; dx <= VIEW_RADIUS; dx++) {
+      for (var dz = -VIEW_RADIUS; dz <= VIEW_RADIUS; dz++) {
+        var cx = pcx + dx, cz = pcz + dz, key = cx + ',' + cz;
+        if (uploaded[key] && !w.dirty.has(key)) continue;
+        uploadChunk(w, cx, cz, prof);
+        w.dirty.delete(key);
+      }
+    }
+  }
+
+  function flattenMesh(mesh) { // {vertices:[[x,y,z]],faces,color} -> flat arrays
+    var positions = [], colors = [], indices = [];
+    var rgb = hexToRgb(mesh.color);
+    for (var i = 0; i < mesh.vertices.length; i++) {
+      positions.push(mesh.vertices[i][0], mesh.vertices[i][1], mesh.vertices[i][2]);
+      colors.push(rgb[0], rgb[1], rgb[2]);
+    }
+    for (var f = 0; f < mesh.faces.length; f++) {
+      indices.push(mesh.faces[f][0], mesh.faces[f][1], mesh.faces[f][2]);
+    }
+    return { positions: positions, colors: colors, indices: indices };
+  }
+
+  function hexToRgb(h) {
+    return [
+      parseInt(h.substr(1, 2), 16) / 255,
+      parseInt(h.substr(3, 2), 16) / 255,
+      parseInt(h.substr(5, 2), 16) / 255,
+    ];
+  }
+
+  // Targeted-block marker as a resident '__hl' chunk: replaced wholesale
+  // whenever the aim cell changes (the runtime has no voxel.chunkRemove
+  // yet, so an empty aim parks a zero-area quad at the origin instead).
+  function highlight(w, target) {
+    if (!isNative()) return;
+    var cell = target && target.hit ? target.x + ',' + target.y + ',' + target.z : '';
+    if (cell === hlCell) return;
+    hlCell = cell;
+    var mesh = cell ? highlightMesh(w, target) : null;
+    var flat = mesh ? flattenMesh(mesh)
+      : { positions: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+          colors: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+          indices: [0, 1, 2, 0, 2, 3] };
+    push('voxel.mesh', {
+      id: NATIVE_ID, key: '__hl', origin: [0, 0, 0],
+      positions: flat.positions, colors: flat.colors, indices: flat.indices,
+    });
+  }
+
+  // One tiny bridge call per frame — the whole per-frame 3D cost natively.
+  function camera(w, player, sky) {
+    if (!isNative()) return;
+    push('voxel.camera', {
+      id: NATIVE_ID,
+      position: [player.x, player.y + Facraft.physics.EYE_H, player.z],
+      yaw: player.yaw, pitch: player.pitch,
+      light: sky.light, skyColor: sky.color, fov: FOV,
+    });
+  }
+
+  // The viewport node for the current frame. Native: a bare voxel node —
+  // geometry lives bridge-side, the render tree carries none of it.
+  // Pending/failed probe or older runtimes: the legacy scene3d meshes path.
   function view(w, player, sky, target) {
+    if (nativeOn === true) return { type: 'voxel', id: NATIVE_ID };
     var dir = Facraft.physics.dirOf(player.yaw, player.pitch);
     var ex = player.x, ey = player.y + Facraft.physics.EYE_H, ez = player.z;
     var pcx = Math.floor(ex / 16), pcz = Math.floor(ez / 16);
@@ -314,5 +454,14 @@ Facraft.voxel = (function() {
     };
   }
 
-  return { view: view, reset: reset };
+  function reset() {
+    cache.key = null; cache.meshes = null;
+    uploaded = {}; hlCell = '';
+  }
+
+  return {
+    view: view, reset: reset,
+    probe: probe, isNative: isNative,
+    sync: sync, camera: camera, highlight: highlight,
+  };
 })();

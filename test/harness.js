@@ -91,11 +91,18 @@ function fakeJsr() {
     viewport() { return { width: 480, height: 720 }; },
     hostCall(name, args) {
       calls.push(['hostCall:' + name, approximateJsonSize(args)]);
-      if (name === 'voxel.attach') return Promise.resolve({ ok: true }); // host capability probe
+      if (name === 'voxel.attach') {
+        // host capability probe: rejectable so tests can force the legacy
+        // scene3d path (bootGame({ voxelNative: false })).
+        return jsr.voxelNative === false
+          ? Promise.reject(new Error('no voxel support'))
+          : Promise.resolve({ ok: true });
+      }
       if (!jsr.hostHandlers[name]) return Promise.reject(new Error('no handler for ' + name));
       return Promise.resolve(jsr.hostHandlers[name](args));
     },
     hostHandlers: {},
+    voxelNative: true,
     requestAnimationFrame(fn) { rafQ.push(fn); return rafQ.length; },
     setTimeout(fn, ms) { return 0; },
     clearTimeout() {},
@@ -137,6 +144,7 @@ async function bootGame(opts) {
   const jsr = fakeJsr();
   if (opts && opts.hostHandlers) Object.assign(jsr.hostHandlers, opts.hostHandlers);
   if (opts && opts.storage) Object.assign(jsr.storage, opts.storage);
+  if (opts && opts.voxelNative === false) jsr.voxelNative = false;
   const seen = new Set();
   const out = [];
   bundle('game/main.js', 1, seen, out);

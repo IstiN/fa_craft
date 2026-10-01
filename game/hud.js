@@ -198,7 +198,7 @@ Facraft.hud = (function() {
 
   function debugLines(state) {
     var p = state.world.player;
-    return [
+    var lines = [
       'pos ' + p.x.toFixed(1) + ' ' + p.y.toFixed(1) + ' ' + p.z.toFixed(1),
       'fps ' + Math.round(state.fps || 0),
       'chunks ' + state.world.meshes.size,
@@ -206,6 +206,16 @@ Facraft.hud = (function() {
       'mode ' + state.world.mode,
       'edits ' + state.world.logOps.length,
     ];
+    var pr = Facraft.prof;
+    if (pr) {
+      lines.push(
+        'pipe ' + (Facraft.voxel.isNative() ? 'voxel' : 'scene3d'),
+        'hud ' + (pr.hudMs / Math.max(1, pr.frames)).toFixed(1) +
+          'ms mesh ' + (pr.meshMs / Math.max(1, pr.frames)).toFixed(1) + 'ms',
+        'up ' + pr.uploads + ' (' + Math.round(pr.meshBytes / 1024) + 'KB)'
+      );
+    }
+    return lines;
   }
 
   return { build: build, hotbarBlocks: hotbarBlocks };
