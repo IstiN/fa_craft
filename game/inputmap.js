@@ -8,12 +8,15 @@ Facraft.inputmap = (function() {
     'a': 'left', 'arrowLeft': 'left',
     'd': 'right', 'arrowRight': 'right',
     'space': 'jump',
-    'shiftLeft': 'sneak',
-    'controlLeft': 'sprint',
+    'shiftLeft': 'sneak', 'shift': 'sneak', // runtime labels modifiers generically
+    'controlLeft': 'sprint', 'control': 'sprint',
     'q': 'break', 'e': 'place', // mouse-free mining/building on desktops
     'f': 'fly', 'c': 'craft', 'g': 'mode', 'f3': 'debug',
     'digit1': 'hotbar1', 'digit2': 'hotbar2', 'digit3': 'hotbar3', 'digit4': 'hotbar4',
     'digit5': 'hotbar5', 'digit6': 'hotbar6', 'digit7': 'hotbar7', 'digit8': 'hotbar8',
+    // jsr.onKey labels printable keys by CHARACTER ('1'), not code ('digit1').
+    '1': 'hotbar1', '2': 'hotbar2', '3': 'hotbar3', '4': 'hotbar4',
+    '5': 'hotbar5', '6': 'hotbar6', '7': 'hotbar7', '8': 'hotbar8',
   };
 
   var HELD = { forward: 1, back: 1, left: 1, right: 1, jump: 1, sneak: 1, sprint: 1 };

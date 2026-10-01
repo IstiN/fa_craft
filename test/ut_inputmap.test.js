@@ -72,3 +72,14 @@ test('inputmap: pointer-lock deltas reuse the same look mapping (AC7 surface)', 
   const lock = F.inputmap.pointerDeltaToLook(30, 0, 1);
   assert.strictEqual(drag.dyaw, lock.dyaw, 'same verb, same mapping regardless of surface');
 });
+
+test('inputmap: character key labels work (jsr.onKey sends 1 not digit1, shift not shiftLeft)', async () => {
+  const { F } = await loadNamespace(MODS);
+  const held = {};
+  assert.strictEqual(F.inputmap.applyKey(held, { key: '1', down: true, repeat: false }).action, 'hotbar1');
+  assert.strictEqual(F.inputmap.applyKey(held, { key: '8', down: true, repeat: false }).action, 'hotbar8');
+  assert.strictEqual(F.inputmap.applyKey(held, { key: 'shift', down: true, repeat: false }).action, 'sneak');
+  assert.ok(held.sneak === true, 'shift held');
+  assert.strictEqual(F.inputmap.applyKey(held, { key: 'control', down: true, repeat: false }).action, 'sprint');
+  assert.ok(held.sprint === true, 'control held');
+});
