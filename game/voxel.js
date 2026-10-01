@@ -430,6 +430,7 @@ Facraft.voxel = (function() {
           indices: [0, 1, 2, 0, 2, 3] };
     push('voxel.mesh', {
       id: NATIVE_ID, key: '__hl', origin: [0, 0, 0],
+      overlay: true, // depth-biased in the painter: wins over the coplanar face
       positions: flat.positions, colors: flat.colors, indices: flat.indices,
     });
   }
@@ -442,6 +443,9 @@ Facraft.voxel = (function() {
       position: [player.x, player.y + Facraft.physics.EYE_H, player.z],
       yaw: player.yaw, pitch: player.pitch,
       light: sky.light, skyColor: sky.color, fov: FOV,
+      // Pixelated block look: the painter modulates triangles with a
+      // 16px-per-block procedural noise tile.
+      texture: true,
     });
   }
 
@@ -482,5 +486,19 @@ Facraft.voxel = (function() {
     view: view, reset: reset,
     probe: probe, isNative: isNative,
     sync: sync, camera: camera, highlight: highlight,
+    // Resident-chunk primitives for dynamic actors (mobs): uploadMesh
+    // replaces a chunk wholesale, removeMesh evicts it (despawn).
+    uploadMesh: function(key, flat) {
+      if (!isNative()) return;
+      push('voxel.mesh', {
+        id: NATIVE_ID, key: key, origin: flat.origin,
+        positions: flat.positions, colors: flat.colors,
+        indices: flat.indices,
+      });
+    },
+    removeMesh: function(key) {
+      if (!isNative()) return;
+      push('voxel.chunkRemove', { id: NATIVE_ID, key: key });
+    },
   };
 })();

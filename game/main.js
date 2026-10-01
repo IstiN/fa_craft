@@ -15,6 +15,7 @@ import './survival.js';
 import './daynight.js';
 import './inputmap.js';
 import './hud.js';
+import './mobs.js';
 import './voxel.js';
 
 (function() {
@@ -94,6 +95,7 @@ import './voxel.js';
       notice: state.notice,
       hint: state.hint,
       flying: p.flying === true,
+      mobs: (state.world.mobs || []).length,
       craftOpen: state.craftOpen,
       debug: state.debug,
       fps: Math.round(state.fps),
@@ -319,6 +321,9 @@ import './voxel.js';
         lastCamKey = camKey;
         Facraft.voxel.camera(w, w.player, D.sky(w.dayTime));
       }
+      // Passive mobs wander after the camera push — their chunk uploads
+      // ride the same frame.
+      Facraft.mobs.tick(w, dt);
       prof.meshMs += Date.now() - m0;
 
       // exportState every frame: the payload is small (scalars + inventory

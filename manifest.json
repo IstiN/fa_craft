@@ -1,9 +1,9 @@
 {
   "id": "fa-craft",
   "name": "Fa Craft",
-  "description": "Minecraft-like voxel sandbox with light survival — fully local, plays on macOS, iOS, Android and web.",
-  "version": "0.2.6",
-  "icon": "⛏️",
+  "description": "Minecraft-like voxel sandbox with light survival \u2014 fully local, plays on macOS, iOS, Android and web.",
+  "version": "0.2.7",
+  "icon": "\u26cf\ufe0f",
   "allowedCommands": [],
   "network": false,
   "cli": {

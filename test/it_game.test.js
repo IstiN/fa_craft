@@ -48,7 +48,8 @@ test('loop: rAF advances sim and day clock; HUD renders only on change (native)'
 });
 
 test('bridge budget: per-frame outbound calls stay bounded (IT)', async () => {
-  const { jsr } = await bootGame({ hostHandlers: { 'voxel.mesh': () => true, 'voxel.camera': () => true } });
+  const { jsr, sandbox } = await bootGame({ hostHandlers: { 'voxel.mesh': () => true, 'voxel.camera': () => true } });
+  sandbox.Facraft.state.world.mobsPaused = true; // terrain-only budget
  await jsr.pumpFrames(10, 16.6); // settle after boot
   const before = jsr.calls.length;
  await jsr.pumpFrames(50, 16.6);
@@ -79,6 +80,8 @@ test('voxel adapter (native): voxel node, one mesh upload per chunk, camera per 
   assert.ok(meshes.every((m) => m.positions.length && m.indices.length), 'non-empty chunk buffers');
   const up0 = meshes.length;
   const cam0 = jsr.callCount('hostCall:voxel.camera');
+  // Pause the fauna: wandering mobs legitimately re-upload their chunks.
+  F.state.world.mobsPaused = true;
   await jsr.pumpFrames(20, 16.6);
   assert.strictEqual(meshes.length, up0, 'no re-upload while the world is clean');
   const idleCam = jsr.callCount('hostCall:voxel.camera') - cam0;
@@ -92,7 +95,10 @@ test('voxel adapter (native): voxel node, one mesh upload per chunk, camera per 
   await jsr.pumpFrames(1, 16.6);
   // The edit dirties its chunk (plus the west neighbor: x=0 is a chunk
   // border, and border edits invalidate the neighbor's culled faces).
-  const reuploaded = meshes.slice(up0);
+  // '__'-prefixed resident chunks (aim marker follows the rotated camera)
+  // are not terrain uploads.
+  const reuploaded = meshes.slice(up0)
+    .filter((m) => !String(m.key).startsWith('__'));
   assert.ok(reuploaded.length >= 1 && reuploaded.length <= 2,
     'world edit re-uploads only dirty chunks, got ' + reuploaded.length);
   assert.ok(reuploaded.some((m) => m.key === '0,0'), 'the edited chunk re-uploaded');
@@ -384,4 +390,51 @@ test('input: jump pad (touch) holds jump and lifts the player', async () => {
   await jsr.pumpFrames(10, 16.6);
   jsr.fire('jumpUp', {});
   assert.ok(F.state.world.player.y > y0, 'jump pad lifts the player');
+});
+
+test('mobs: pigs and chickens spawn, wander, and upload resident chunks', async () => {
+  const keys = [];
+  const { jsr, sandbox } = await bootGame({
+    hostHandlers: {
+      'voxel.mesh': (a) => { keys.push(a.key); return true; },
+      'voxel.camera': () => true,
+    },
+  });
+  const F = sandbox.Facraft;
+  await jsr.pumpFrames(30, 16.6);
+  const mobs = F.state.world.mobs || [];
+  assert.ok(mobs.length > 0, 'mobs spawned near spawn point');
+  assert.ok(mobs.some((m) => m.type === 'pig'), 'at least one pig');
+  const uploads = keys.filter((k) => typeof k === 'string' && k.startsWith('__mob'));
+  assert.ok(uploads.length > 0, 'mob chunks uploaded: ' + uploads.join(','));
+  const m0 = { x: mobs[0].x, z: mobs[0].z };
+  await jsr.pumpFrames(240, 16.6); // ~4s of wandering
+  const m1 = F.state.world.mobs[0];
+  assert.ok(m1, 'mob still present (in range)');
+});
+
+// Signed volume of a closed mesh: sum(dot(a, cross(b, c)))/6 — the sign
+// flips with winding, so matching a known-good terrain mesh proves the
+// backface-cull contract regardless of part offsets.
+function signedVolume(mesh) {
+  const P = mesh.positions, I = mesh.indices;
+  let v = 0;
+  for (let q = 0; q < I.length; q += 3) {
+    const a = I[q] * 3, b = I[q + 1] * 3, c = I[q + 2] * 3;
+    v += (P[a] * (P[b + 1] * P[c + 2] - P[b + 2] * P[c + 1]) +
+      P[a + 1] * (P[b + 2] * P[c] - P[b] * P[c + 2]) +
+      P[a + 2] * (P[b] * P[c + 1] - P[b + 1] * P[c])) / 6;
+  }
+  return v;
+}
+
+test('mobs: mobMesh winding matches the terrain mesher (cull contract)', async () => {
+  const { sandbox } = await bootGame();
+  const F = sandbox.Facraft;
+  for (const type of ['pig', 'chicken']) {
+    const mesh = F.mobs.mobMesh({ type, x: 0, y: 10, z: 0, yaw: 0.7 });
+    assert.ok(mesh.positions.length > 0 && mesh.indices.length % 6 === 0);
+    assert.ok(signedVolume(mesh) > 0,
+      type + ' volume sign matches outward-CCW terrain: ' + signedVolume(mesh));
+  }
 });
