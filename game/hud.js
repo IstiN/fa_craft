@@ -32,7 +32,7 @@ Facraft.hud = (function() {
         type: 'stack', children: [
           { type: 'center',
             child: { type: 'rect', width: 30, height: 30, fill: swatch(c) } },
-          { type: 'positioned', right: 3, bottom: 2,
+          { positioned: { right: 3, bottom: 2 },
             child: { type: 'text', data: count,
               style: { fontSize: 11, fontWeight: 'bold', color: '#ffffff' } } },
         ],

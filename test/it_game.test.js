@@ -492,3 +492,16 @@ test('mobs: raycast prefers the nearer mob, misses past maxDist', async () => {
   const aside = F.mobs.raycast(w, 5, 61, 0, 0, 0, -1, 6);
   assert.strictEqual(aside, null, 'off-axis ray misses');
 });
+
+test('hud: render tree never emits an unknown "positioned" node type', async () => {
+  // Stack children use the MAP form ({positioned:{...}, child}) — a
+  // type:'positioned' node falls back to an 'Unknown type' error label.
+  const { jsr } = await bootGame();
+  await jsr.pumpFrames(3, 16.6);
+  let bad = 0;
+  JSON.stringify(jsr.lastTree, (k, v) => {
+    if (k === 'type' && v === 'positioned') bad++;
+    return v;
+  });
+  assert.strictEqual(bad, 0, 'no type:"positioned" nodes in the tree');
+});
