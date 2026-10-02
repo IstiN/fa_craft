@@ -276,7 +276,12 @@ import './voxel.js';
   function handleKey(ev) {
     if (!bootReady) return;
     var r = IM.applyKey(held, ev);
-    if (r.action && !r.held) handleEvent(r.action);
+    if (!r.action || r.held) return;
+    // Digit keys arrive as 'hotbarN' — the ACTIONS table only knows the
+    // payload-carrying 'hotbar' verb (same one slot taps fire).
+    var hb = /^hotbar(\d)$/.exec(r.action);
+    if (hb) { handleEvent('hotbar', { slot: +hb[1] }); return; }
+    handleEvent(r.action);
   }
 
   // --- loop ---------------------------------------------------------------

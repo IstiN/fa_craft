@@ -505,3 +505,16 @@ test('hud: render tree never emits an unknown "positioned" node type', async () 
   });
   assert.strictEqual(bad, 0, 'no type:"positioned" nodes in the tree');
 });
+
+test('hotbar: digit keys 1-8 select the slot (hotbarN → hotbar{slot})', async () => {
+  const { jsr, sandbox } = await bootGame();
+  const F = sandbox.Facraft;
+  for (const [key, slot] of [['1', 1], ['3', 3], ['8', 8]]) {
+    jsr.fireKey({ key, code: 'Digit' + key, down: true, repeat: false });
+    assert.strictEqual(F.state.selected, slot, 'key ' + key + ' selects slot ' + slot);
+    jsr.fireKey({ key, code: 'Digit' + key, down: false, repeat: false });
+  }
+  // repeat noise does not re-fire
+  jsr.fireKey({ key: '3', code: 'Digit3', down: true, repeat: true });
+  assert.strictEqual(F.state.selected, 8, 'repeat ignored');
+});
