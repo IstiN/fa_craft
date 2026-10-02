@@ -10,28 +10,31 @@ Facraft.hud = (function() {
     return [b.GRASS, b.DIRT, b.STONE, b.LOG, b.LEAVES, b.SAND, b.PLANKS, b.BRICKS];
   }
 
+  // Minecraft-style slot: a compact square, the block swatch filling it
+  // (the grass green reads wide), stack count bottom-right, and a white
+  // frame on the selected slot. No name labels — icons carry the UI.
   function slot(state, t, id, index) {
     var selected = state.selected === index;
     var count = state.world.mode === 'creative' ? '∞' : String(state.world.inventory[id] || 0);
     var c = B().color(id);
     return {
       type: 'container', hotbarIndex: index,
-      width: 44, height: 56,
+      width: 46, height: 46,
       decoration: {
-        color: t.surface,
-        borderRadius: 6,
+        color: selected ? '#2a2f3ae6' : '#10131acc',
+        borderRadius: 4,
         // runtime schema: flat borderColor/borderWidth (nested border:{} is
         // silently ignored by the decoration parser)
-        borderColor: selected ? t.accent : t.border,
+        borderColor: selected ? '#ffffff' : '#ffffff26',
         borderWidth: selected ? 2 : 1,
       },
       child: {
-        type: 'column', mainAxisSize: 'min', children: [
-          { type: 'rect', width: 18, height: 18, fill: swatch(c) }, // mini-block square
-          { type: 'sizedBox', height: 3 },
-          { type: 'text', data: B().name(id), style: { fontSize: 10, color: t.text } },
-          { type: 'sizedBox', height: 1 },
-          { type: 'text', data: count, style: { fontSize: 10, color: t.muted } },
+        type: 'stack', children: [
+          { type: 'center',
+            child: { type: 'rect', width: 30, height: 30, fill: swatch(c) } },
+          { type: 'positioned', right: 3, bottom: 2,
+            child: { type: 'text', data: count,
+              style: { fontSize: 11, fontWeight: 'bold', color: '#ffffff' } } },
         ],
       },
     };

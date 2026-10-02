@@ -87,11 +87,17 @@ Facraft.mobs = (function() {
     return { positions: P2, colors: C2, indices: I2 };
   }
 
-  function ensureSpawn(w) {
+  function ensureSpawn(w, dt) {
     if (!w.mobs) w.mobs = [];
+    // Spawn trickle: without a cooldown a butchered mob respawns the very
+    // next tick — from the player's view the chicken "teleports away".
+    w.mobSpawnCooldown = Math.max(0, (w.mobSpawnCooldown || 0) - dt);
+    if (w.mobSpawnCooldown > 0) return;
     if (w.mobs.length >= MAX_MOBS) return;
     var px = w.player.x, pz = w.player.z;
-    var n = w.mobs.length;
+    // Hash on the ever-increasing mob id, not the current count — a
+    // replacement spawns somewhere NEW, not where the last one died.
+    var n = w.nextMobId || 0;
     var ang = hash3(w.seed, n, 7) % 628 / 100;
     var dist = 10 + (hash3(w.seed, n, 13) % 14);
     var x = Math.floor(px + Math.cos(ang) * dist) + 0.5;
@@ -109,6 +115,7 @@ Facraft.mobs = (function() {
           onGround: false, moving: false, think: 1 + n * 0.7,
           uploadKey: '',
         });
+        w.mobSpawnCooldown = 4; // seconds before the next wanderer appears
         return;
       }
     }
@@ -117,7 +124,7 @@ Facraft.mobs = (function() {
   function tick(w, dt) {
     if (!w.mobs) w.mobs = [];
     if (w.mobsPaused) return; // test seam: deterministic bridge budgets
-    ensureSpawn(w);
+    ensureSpawn(w, dt);
     var px = w.player.x, pz = w.player.z;
     for (var i = w.mobs.length - 1; i >= 0; i--) {
       var m = w.mobs[i];
