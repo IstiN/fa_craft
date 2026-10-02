@@ -415,16 +415,72 @@ Facraft.voxel = (function() {
     ];
   }
 
+  // Aimed-face marker: a bright border RING on the raycast entry face —
+  // top face when looking down, side face when facing a wall. Reads as a
+  // selection outline (Minecraft-style) instead of a shaded blob.
+  // Face tables mirror mesh.js (CCW-from-outside winding contract).
+  var HL_AXES = [[1, 2], [1, 2], [0, 2], [0, 2], [0, 1], [0, 1]];
+  var HL_CORNERS = [
+    [[0, 0], [1, 0], [1, 1], [0, 1]], // +x
+    [[0, 1], [1, 1], [1, 0], [0, 0]], // -x
+    [[0, 0], [0, 1], [1, 1], [1, 0]], // +y
+    [[0, 0], [1, 0], [1, 1], [0, 1]], // -y
+    [[1, 0], [1, 1], [0, 1], [0, 0]], // +z
+    [[0, 0], [0, 1], [1, 1], [1, 0]], // -z
+  ];
+  var HL_LIFT = 0.004; // off the surface — no coplanar flicker
+  var HL_INSET = 0.10; // border thickness, in blocks
+
+  function faceOutlineMesh(t) {
+    var n = [t.nx, t.ny, t.nz];
+    var A = n[0] !== 0 ? 0 : (n[1] !== 0 ? 1 : 2);
+    var positive = n[A] > 0;
+    var f = A * 2 + (positive ? 0 : 1);
+    var U = HL_AXES[f][0], V = HL_AXES[f][1];
+    var a = positive ? 1 + HL_LIFT : -HL_LIFT;
+    var base = [t.x, t.y, t.z];
+    // corner point of rect (u0,u1,v0,v1) at sign (su, sv)
+    function corner(su, sv, u0, u1, v0, v1) {
+      var q = [0, 0, 0];
+      q[A] = base[A] + a;
+      q[U] = base[U] + (su ? u1 : u0);
+      q[V] = base[V] + (sv ? v1 : v0);
+      return q;
+    }
+    var cs = HL_CORNERS[f];
+    var P = [], C = [], I = [];
+    var o = [-HL_LIFT, 1 + HL_LIFT], inn = [HL_INSET, 1 - HL_INSET];
+    for (var k = 0; k < 4; k++) {
+      var k2 = (k + 1) % 4;
+      var quad = [
+        corner(cs[k][0], cs[k][1], o[0], o[1], o[0], o[1]),
+        corner(cs[k2][0], cs[k2][1], o[0], o[1], o[0], o[1]),
+        corner(cs[k2][0], cs[k2][1], inn[0], inn[1], inn[0], inn[1]),
+        corner(cs[k][0], cs[k][1], inn[0], inn[1], inn[0], inn[1]),
+      ];
+      var vb = P.length / 3;
+      for (var v = 0; v < 4; v++) {
+        P.push(quad[v][0], quad[v][1], quad[v][2]);
+        C.push(1, 1, 1); // bright — reads on any block, day or night
+      }
+      I.push(vb, vb + 1, vb + 2, vb, vb + 2, vb + 3);
+    }
+    return { positions: P, colors: C, indices: I };
+  }
+
   // Targeted-block marker as a resident '__hl' chunk: replaced wholesale
-  // whenever the aim cell changes (the runtime has no voxel.chunkRemove
-  // yet, so an empty aim parks a zero-area quad at the origin instead).
+  // whenever the aim cell OR the aimed face changes (an empty aim parks
+  // a zero-area quad at the origin instead of a chunkRemove, so older
+  // runtimes keep working).
   function highlight(w, target) {
     if (!isNative()) return;
-    var cell = target && target.hit ? target.x + ',' + target.y + ',' + target.z : '';
+    var cell = target && target.hit
+      ? target.x + ',' + target.y + ',' + target.z + ',' +
+        target.nx + ',' + target.ny + ',' + target.nz
+      : '';
     if (cell === hlCell) return;
     hlCell = cell;
-    var mesh = cell ? highlightMesh(w, target) : null;
-    var flat = mesh ? flattenMesh(mesh)
+    var flat = cell ? faceOutlineMesh(target)
       : { positions: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
           colors: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
           indices: [0, 1, 2, 0, 2, 3] };

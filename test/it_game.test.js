@@ -120,8 +120,14 @@ test('voxel adapter (native): aimed block uploads a resident __hl highlight chun
   const hl = meshes.filter((m) => m.key === '__hl');
   assert.ok(hl.length >= 1, 'highlight chunk uploaded');
   const shell = hl[hl.length - 1];
-  assert.strictEqual(shell.positions.length, 24, '8 shell corners');
-  assert.strictEqual(shell.indices.length, 36, '12 triangles');
+  // Selection ring on the aimed face: 4 border quads, bright, coplanar
+  // with the +z entry face (aim from +z), lifted a hair off the surface.
+  assert.strictEqual(shell.positions.length, 48, '16 ring corners');
+  assert.strictEqual(shell.indices.length, 24, '8 ring triangles');
+  assert.ok(shell.positions.every((v, i) => i % 3 !== 2 || Math.abs(v - (-2 + 1.004)) < 1e-9),
+    'ring lies on the aimed +z face plane');
+  assert.ok(shell.colors.every((c) => c === 1), 'ring is bright white');
+  assert.strictEqual(shell.overlay, true, 'ring depth-biased over the block face');
   // looking at the sky parks a degenerate marker (no voxel.chunkRemove yet)
   F.state.world.player.pitch = 1.5;
   await jsr.pumpFrames(2, 16.6);
