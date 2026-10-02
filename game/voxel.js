@@ -328,18 +328,16 @@ Facraft.voxel = (function() {
       var ux = P[v3] - P[v0], uy = P[v3 + 1] - P[v0 + 1], uz = P[v3 + 2] - P[v0 + 2];
       var ny = az * ux - ax * uz;
       var s = CLS[ny > 0 ? 2 : ny < 0 ? 0 : 1];
-      // Per-CORNER hue jitter: the painter interpolates vertex colors, so
-      // greedy-merged quads get a smooth per-block gradient instead of one
-      // flat tint. Adjacent quads sharing a corner hash it identically.
+      // Flat per-quad tint: per-corner jitter on a greedy-merged quad
+      // interpolates into WAVY gradient bands after the painter's texture
+      // subdivision — the noise tile owns the pixel detail now, so the
+      // face keeps one straight brightness class (Minecraft-flat look).
       var vs = [I[q], I[q + 1], I[q + 2], I[q + 5]];
       for (var v = 0; v < 4; v++) {
         var b = vs[v] * 3;
-        var hue = HUES[h32(
-          Math.round(cx * 16 + P[b]), Math.round(P[b + 1]),
-          Math.round(cz * 16 + P[b + 2]), 0x5eed) % HUES.length];
-        C[b] = Math.min(1, C[b] * hue[0] * s);
-        C[b + 1] = Math.min(1, C[b + 1] * hue[1] * s);
-        C[b + 2] = Math.min(1, C[b + 2] * hue[2] * s);
+        C[b] = Math.min(1, C[b] * s);
+        C[b + 1] = Math.min(1, C[b + 1] * s);
+        C[b + 2] = Math.min(1, C[b + 2] * s);
       }
     }
   }

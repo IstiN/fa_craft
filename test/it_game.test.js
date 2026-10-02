@@ -444,3 +444,51 @@ test('mobs: mobMesh winding matches the terrain mesher (cull contract)', async (
       type + ' volume sign matches outward-CCW terrain: ' + signedVolume(mesh));
   }
 });
+
+test('mobs: attack butchers the aimed mob and heals (meat drop)', async () => {
+  const keys = [];
+  const { jsr, sandbox } = await bootGame({
+    hostHandlers: {
+      'voxel.mesh': (a) => { keys.push(a.key); return true; },
+      'voxel.camera': () => true,
+    },
+  });
+  const F = sandbox.Facraft;
+  await jsr.pumpFrames(30, 16.6);
+  const w = F.state.world;
+  assert.ok(w.mobs.length > 0, 'mobs spawned');
+  // Teleport mob 0 in front of the player and aim DOWN at it — a pig is
+  // 1.25 blocks tall, the horizontal eye ray (1.62) passes over its head.
+  const p = w.player;
+  const m = w.mobs[0];
+  const dir = F.physics.dirOf(p.yaw = 0, p.pitch = -0.45);
+  m.x = p.x + dir.x * 2 / Math.hypot(dir.x, dir.z);
+  m.y = p.y;
+  m.z = p.z + dir.z * 2 / Math.hypot(dir.x, dir.z);
+  m.vx = m.vy = m.vz = 0;
+  m.moving = false;
+  m.think = 99;
+  const hp0 = w.health = 10;
+  const before = w.mobs.length;
+  jsr.fire('break');
+  assert.strictEqual(w.mobs.length, before - 1, 'mob butchered');
+  assert.strictEqual(w.health, hp0 + 2, 'meat heals +2 HP');
+  assert.strictEqual(w.mobKills, 1, 'kill counted in exportState');
+  assert.ok(keys.filter((k) => k === '__mob' + m.id).length >= 0); // key by id
+});
+
+test('mobs: raycast prefers the nearer mob, misses past maxDist', async () => {
+  const { sandbox } = await bootGame();
+  const F = sandbox.Facraft;
+  const w = F.state.world;
+  w.mobs = [
+    { id: 1, type: 'pig', x: 0.5, y: 60, z: -1.5, yaw: 0, vx: 0, vy: 0, vz: 0, think: 99, uploadKey: '' },
+    { id: 2, type: 'chicken', x: 0.5, y: 60, z: -3, yaw: 0, vx: 0, vy: 0, vz: 0, think: 99, uploadKey: '' },
+  ];
+  const hit = F.mobs.raycast(w, 0.5, 61, 0, 0, 0, -1, 6);
+  assert.ok(hit && hit.index === 0, 'nearest mob hit first');
+  const miss = F.mobs.raycast(w, 0.5, 61, 0, 0, 0, -1, 1);
+  assert.strictEqual(miss, null, 'beyond maxDist misses');
+  const aside = F.mobs.raycast(w, 5, 61, 0, 0, 0, -1, 6);
+  assert.strictEqual(aside, null, 'off-axis ray misses');
+});

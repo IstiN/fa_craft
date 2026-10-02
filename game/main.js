@@ -96,6 +96,7 @@ import './voxel.js';
       hint: state.hint,
       flying: p.flying === true,
       mobs: (state.world.mobs || []).length,
+      mobKills: state.world.mobKills || 0,
       craftOpen: state.craftOpen,
       debug: state.debug,
       fps: Math.round(state.fps),
@@ -146,6 +147,20 @@ import './voxel.js';
   }
 
   function onBreak() {
+    // Livestock first: a mob in front of the eye (closer than the aimed
+    // block or simply point-blank) takes the hit — butchering drops meat.
+    var p0 = state.world.player;
+    var e0 = eye();
+    var d0 = P.dirOf(p0.yaw, p0.pitch);
+    var mh = Facraft.mobs.raycast(
+      state.world, e0.x, e0.y, e0.z, d0.x, d0.y, d0.z, 3.5);
+    if (mh) {
+      var meat = Facraft.mobs.kill(state.world, mh.index);
+      state.world.mobKills = (state.world.mobKills || 0) + 1;
+      state.world.health = Math.min(20, state.world.health + 2);
+      setNotice(meat === 'pig' ? 'Pork chop! +2 HP' : 'Chicken! +2 HP');
+      return;
+    }
     var tb = pickTarget();
     if (!tb.hit) { setNotice('Nothing in reach.'); return; }
     try {

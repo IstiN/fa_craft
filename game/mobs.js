@@ -20,6 +20,11 @@ Facraft.mobs = (function() {
   var DESPAWN_R2 = 80 * 80; // walk away and they fade out
   var SPAWN_MIN_R2 = 8 * 8; // …but never right on top of the player
 
+  var DIMS = {
+  pig: { half: 0.5, height: 1.25 },
+  chicken: { half: 0.32, height: 1.05 },
+  };
+
   var PALETTES = {
     pig: { body: [0.94, 0.62, 0.66], head: [0.96, 0.70, 0.73], leg: [0.82, 0.48, 0.53] },
     chicken: { body: [0.93, 0.93, 0.90], head: [0.97, 0.97, 0.95], leg: [0.95, 0.72, 0.20] },
@@ -96,7 +101,9 @@ Facraft.mobs = (function() {
     // surface scan: first solid from above, spawn on top of it
     for (var y = 63; y > 0; y--) {
       if (Facraft.blocks.isSolid(W().get(w, Math.floor(x), y, Math.floor(z)))) {
+        w.nextMobId = (w.nextMobId || 0) + 1;
         w.mobs.push({
+          id: w.nextMobId, // chunk keys survive splice renumbering
           type: (n % 2 === 0) ? 'pig' : 'chicken',
           x: x, y: y + 1, z: z, yaw: ang, vy: 0, vx: 0, vz: 0,
           onGround: false, moving: false, think: 1 + n * 0.7,
@@ -116,7 +123,7 @@ Facraft.mobs = (function() {
       var m = w.mobs[i];
       var d2 = (m.x - px) * (m.x - px) + (m.z - pz) * (m.z - pz);
       if (d2 > DESPAWN_R2) {
-        Facraft.voxel.removeMesh('__mob' + i);
+        Facraft.voxel.removeMesh('__mob' + m.id);
         w.mobs.splice(i, 1);
         continue;
       }
@@ -135,6 +142,48 @@ Facraft.mobs = (function() {
     }
   }
 
+  // Ray vs mob AABBs (slab test) — returns {index, dist} of the nearest
+  // mob hit within maxDist, or null. Lets the attack button butcher
+  // livestock instead of whiffing at the block behind it.
+  function raycast(w, ex, ey, ez, dx, dy, dz, maxDist) {
+    var best = null;
+    var mobs = w.mobs || [];
+    for (var i = 0; i < mobs.length; i++) {
+      var m = mobs[i];
+      var d = DIMS[m.type];
+      var lo = [m.x - d.half, m.y, m.z - d.half];
+      var hi = [m.x + d.half, m.y + d.height, m.z + d.half];
+      var o = [ex, ey, ez], dir = [dx, dy, dz];
+      var t0 = 0, t1 = maxDist, ok = true;
+      for (var a = 0; a < 3 && ok; a++) {
+        if (Math.abs(dir[a]) < 1e-9) {
+          if (o[a] < lo[a] || o[a] > hi[a]) ok = false;
+        } else {
+          var ta = (lo[a] - o[a]) / dir[a];
+          var tb = (hi[a] - o[a]) / dir[a];
+          if (ta > tb) { var tmp = ta; ta = tb; tb = tmp; }
+          if (ta > t0) t0 = ta;
+          if (tb < t1) t1 = tb;
+          if (t0 > t1) ok = false;
+        }
+      }
+      if (ok && t0 < maxDist && (!best || t0 < best.dist)) {
+        best = { index: i, dist: t0 };
+      }
+    }
+    return best;
+  }
+
+  // Butcher a mob: evict its chunk, drop it from the world. Meat is
+  // abstract — the caller decides the reward (heal/notice).
+  function kill(w, i) {
+    var m = w.mobs[i];
+    if (!m) return null;
+    Facraft.voxel.removeMesh('__mob' + m.id);
+    w.mobs.splice(i, 1);
+    return m.type;
+  }
+
   function upload(m, i) {
     if (!Facraft.voxel.isNative()) return;
     var key = Math.round(m.x * 32) + '|' + Math.round(m.y * 32) + '|' +
@@ -142,11 +191,14 @@ Facraft.mobs = (function() {
     if (key === m.uploadKey) return; // re-upload only on visible movement
     m.uploadKey = key;
     var mesh = mobMesh(m);
-    Facraft.voxel.uploadMesh('__mob' + i, {
+    Facraft.voxel.uploadMesh('__mob' + m.id, {
       origin: [0, 0, 0], positions: mesh.positions,
       colors: mesh.colors, indices: mesh.indices,
     });
   }
 
-  return { tick: tick, mobMesh: mobMesh, MAX_MOBS: MAX_MOBS };
+  return {
+    tick: tick, mobMesh: mobMesh, raycast: raycast, kill: kill,
+    MAX_MOBS: MAX_MOBS,
+  };
 })();
