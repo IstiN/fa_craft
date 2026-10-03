@@ -19,6 +19,11 @@ import './mobs.js';
 import './voxel.js';
 
 (function() {
+  // Keep in sync with manifest.json — test/ut_version pins it. Logged in
+  // the status line so field reports name the exact build they ran.
+  var VERSION = '0.2.15';
+  Facraft.version = VERSION;
+
   var B = Facraft.blocks, W = Facraft.world, P = Facraft.physics,
     R = Facraft.raycast, S = Facraft.survival, D = Facraft.daynight,
     IM = Facraft.inputmap, HUD = Facraft.hud;
@@ -353,7 +358,8 @@ import './voxel.js';
 
       prof.frames++;
       if (prof.frames % 300 === 0) {
-        console.log('[facraft] fps=' + Math.round(state.fps) +
+        console.log('[facraft] v=' + VERSION +
+          ' fps=' + Math.round(state.fps) +
           ' hud=' + (prof.hudMs / prof.frames).toFixed(1) + 'ms' +
           ' mesh=' + (prof.meshMs / prof.frames).toFixed(1) + 'ms' +
           ' uploads=' + prof.uploads + ' meshKB=' + Math.round(prof.meshBytes / 1024) +

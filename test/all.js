@@ -13,6 +13,7 @@ const suites = [
   'ut_survival',
   'ut_daynight',
   'ut_inputmap',
+  'ut_version',
   'it_game',
   'it_persistence',
   'it_localonly',
