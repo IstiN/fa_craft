@@ -138,3 +138,24 @@ test('mesh: border edit dirties the adjacent chunk too', async () => {
   assert.ok(built.includes('0,0'), 'own chunk rebuilt');
   assert.ok(built.includes('-1,0'), 'neighbor chunk rebuilt (face culling changes)');
 });
+
+test('mesh: per-block brightness jitter is deterministic, bounded, merge-safe', async () => {
+  const { F } = await loadNamespace(MODS);
+  const base = F.blocks.color(F.blocks.STONE);
+  function jitterAt(x, y, z) {
+    const w = stubWorld(F);
+    F.world.setBlock(w, x, y, z, F.blocks.STONE);
+    return F.mesh.buildChunk(w, 0, 0).colors[0] / base[0];
+  }
+  const jA = jitterAt(0, 40, 0);
+  const jB = jitterAt(8, 40, 8);
+  assert.strictEqual(jitterAt(0, 40, 0), jA, 'same world -> same jitter');
+  assert.ok(jA >= 0.9 && jA <= 1.1, 'jitter A bounded: ' + jA);
+  assert.ok(jB >= 0.9 && jB <= 1.1, 'jitter B bounded: ' + jB);
+  assert.ok(Math.abs(jA - jB) > 1e-6, 'different blocks get different jitter');
+  // Flat per face: all four corners of a face carry the same jittered color.
+  const w = stubWorld(F);
+  F.world.setBlock(w, 0, 40, 0, F.blocks.STONE);
+  const m = F.mesh.buildChunk(w, 0, 0);
+  for (let v = 1; v < 4; v++) assert.strictEqual(m.colors[v * 3], m.colors[0]);
+});

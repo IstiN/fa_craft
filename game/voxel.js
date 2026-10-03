@@ -497,9 +497,12 @@ Facraft.voxel = (function() {
       position: [player.x, player.y + Facraft.physics.EYE_H, player.z],
       yaw: player.yaw, pitch: player.pitch,
       light: sky.light, skyColor: sky.color, fov: FOV,
-      // Pixelated block look: the painter modulates triangles with a
-      // 16px-per-block procedural noise tile.
-      texture: true,
+      // No shader-noise texturing: affine uv on a software rasterizer
+      // can only be tamed by adaptive subdivision, and every variant of
+      // that (w1..w5) traded one artifact for another — swimming, band
+      // pops, diagonal creases, contrast boundaries — at 20-60k tris.
+      // The blocky texture feel lives in the mesher's per-block jitter.
+      texture: false,
     });
   }
 

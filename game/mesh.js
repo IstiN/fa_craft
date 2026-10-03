@@ -70,7 +70,15 @@ Facraft.mesh = (function() {
             q[A] = s + dn; q[U] = u; q[V] = v;
             if (B().isSolid(block(w, q[0], q[1], q[2], cx, cz))) continue;
             var col = B().color(b);
-            seedCol[v * SU + u] = col;
+            // Per-block brightness jitter (±10%, deterministic on world
+            // position): the blocky texture feel without uv texturing —
+            // vertex colors interpolate artifact-free at any angle.
+            // The MERGE key below still uses the flat color, so jitter
+            // becomes per-rectangle and greedy merging is unaffected.
+            var wx0 = cx * 16 + p[0], wy0 = p[1], wz0 = cz * 16 + p[2];
+            var h = Math.sin(wx0 * 127.1 + wy0 * 311.7 + wz0 * 74.7) * 43758.5453;
+            var j = 0.9 + 0.2 * (h - Math.floor(h));
+            seedCol[v * SU + u] = [col[0] * j, col[1] * j, col[2] * j];
             MASK[v * SU + u] =
               ((Math.round(col[0] * 255) << 16) |
                 (Math.round(col[1] * 255) << 8) |
