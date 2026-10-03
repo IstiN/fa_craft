@@ -65,9 +65,25 @@ Facraft.physics = (function() {
   }
 
   // One step. Returns { landed: impactSpeed|0 }.
+  // Substeps so no single move teleports further than ~0.4 blocks:
+  // moveAxis only collision-checks the DESTINATION, so one janky frame
+  // (rAF starved by a slow paint) at terminal fall speed would otherwise
+  // tunnel straight through the floor into the void.
   function step(p, input, w, dt, mode) {
     if (dt > DT_MAX) dt = DT_MAX; // E3: backgrounded tab / throttled rAF
     if (dt < 0) dt = 0;
+    var maxV = Math.max(Math.abs(p.vx), Math.abs(p.vy), Math.abs(p.vz), WALK);
+    var n = Math.max(1, Math.ceil((maxV + GRAVITY * dt) * dt / 0.4));
+    var h = dt / n;
+    var landed = 0;
+    for (var s = 0; s < n; s++) {
+      var r = substep(p, input, w, h, mode);
+      if (r.landed > landed) landed = r.landed;
+    }
+    return { landed: landed };
+  }
+
+  function substep(p, input, w, dt, mode) {
     var flying = p.flying === true && mode === 'creative';
     var speed = flying ? FLY : (input.sneak ? SNEAK : (input.sprint ? SPRINT : WALK));
 

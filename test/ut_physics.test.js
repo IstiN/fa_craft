@@ -76,6 +76,20 @@ test('physics: dt clamp — a huge frame does not explode the sim (E3)', async (
   assert.ok(p.y <= 26, 'did not launch upward');
 });
 
+test('physics: terminal-velocity jank frame lands instead of tunneling', async () => {
+  const { F } = await loadNamespace(MODS);
+  const w = flatWorld(F);
+  const p = spawn();
+  p.y = 26; p.onGround = false;
+  p.vy = -50; // terminal fall speed, as after a long janky fall
+  // One 250ms frame (rAF starved by a slow paint): 12.5 blocks of motion
+  // in a single step. Without substepping moveAxis only checks the
+  // destination and the player falls through the floor into the void.
+  F.physics.step(p, {}, w, F.physics.DT_MAX, 'survival');
+  assert.ok(p.onGround, 'landed on the platform, not tunneled');
+  assert.ok(Math.abs(p.y - STAND_Y) < 0.02, 'feet on platform: ' + p.y);
+});
+
 test('physics: fly mode rises and ignores gravity', async () => {
   const { F } = await loadNamespace(MODS);
   const w = flatWorld(F);
