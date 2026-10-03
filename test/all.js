@@ -9,6 +9,7 @@ const suites = [
   'ut_physics',
   'ut_raycast',
   'ut_mesh',
+  'ut_fx',
   'ut_craft',
   'ut_survival',
   'ut_daynight',

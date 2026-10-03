@@ -445,7 +445,7 @@ test('mobs: mobMesh winding matches the terrain mesher (cull contract)', async (
   }
 });
 
-test('mobs: attack butchers the aimed mob and heals (meat drop)', async () => {
+test('mobs: attack butchers the aimed mob; meat drop heals on pickup', async () => {
   const keys = [];
   const { jsr, sandbox } = await bootGame({
     hostHandlers: {
@@ -472,8 +472,15 @@ test('mobs: attack butchers the aimed mob and heals (meat drop)', async () => {
   const before = w.mobs.length;
   jsr.fire('break');
   assert.strictEqual(w.mobs.length, before - 1, 'mob butchered');
-  assert.strictEqual(w.health, hp0 + 2, 'meat heals +2 HP');
   assert.strictEqual(w.mobKills, 1, 'kill counted in exportState');
+  assert.strictEqual(w.health, hp0, 'no instant heal — meat is a physical drop now');
+  assert.strictEqual(w.drops.length, 1, 'meat drop spawned at the mob');
+  // Walk over the drop: the pickup tick feeds the player.
+  const d = w.drops[0];
+  p.x = d.x; p.z = d.z;
+  await jsr.pumpFrames(30, 16.6);
+  assert.strictEqual(w.drops.length, 0, 'drop collected');
+  assert.strictEqual(w.health, hp0 + 2, 'meat heals +2 HP on pickup');
   assert.ok(keys.filter((k) => k === '__mob' + m.id).length >= 0); // key by id
 });
 

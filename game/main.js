@@ -16,12 +16,13 @@ import './daynight.js';
 import './inputmap.js';
 import './hud.js';
 import './mobs.js';
+import './fx.js';
 import './voxel.js';
 
 (function() {
   // Keep in sync with manifest.json — test/ut_version pins it. Logged in
   // the status line so field reports name the exact build they ran.
-  var VERSION = '0.2.17';
+  var VERSION = '0.2.18';
   Facraft.version = VERSION;
 
   var B = Facraft.blocks, W = Facraft.world, P = Facraft.physics,
@@ -160,16 +161,24 @@ import './voxel.js';
     var mh = Facraft.mobs.raycast(
       state.world, e0.x, e0.y, e0.z, d0.x, d0.y, d0.z, 3.5);
     if (mh) {
+      var mob = state.world.mobs[mh.index];
       var meat = Facraft.mobs.kill(state.world, mh.index);
       state.world.mobKills = (state.world.mobKills || 0) + 1;
-      state.world.health = Math.min(20, state.world.health + 2);
-      setNotice(meat === 'pig' ? 'Pork chop! +2 HP' : 'Chicken! +2 HP');
+      // Gibs burst + a physical meat drop that pops out, bobs and is
+      // eaten by walking over it (heal happens in tick on pickup).
+      Facraft.fx.burst(state.world, mob.x, mob.y + 0.6, mob.z,
+        Facraft.fx.GIBS[meat] || Facraft.fx.GIBS.chicken, 12);
+      Facraft.fx.spawnDrop(state.world, mob.x, mob.y + 0.5, mob.z, meat);
+      setNotice(meat === 'pig' ? 'Pork chop dropped!' : 'Chicken dropped!');
       return;
     }
     var tb = pickTarget();
     if (!tb.hit) { setNotice('Nothing in reach.'); return; }
+    var broken = Facraft.world.get(state.world, tb.x, tb.y, tb.z);
     try {
       W.apply(state.world, { t: 'set', x: tb.x, y: tb.y, z: tb.z, b: B.AIR });
+      Facraft.fx.burst(state.world, tb.x + 0.5, tb.y + 0.5, tb.z + 0.5,
+        B.palette(broken, false), 14);
     } catch (e) { setNotice(e.message); }
   }
 
@@ -349,6 +358,12 @@ import './voxel.js';
       // Passive mobs wander after the camera push — their chunk uploads
       // ride the same frame.
       Facraft.mobs.tick(w, dt);
+      // Particles + meat drops; pickups feed the player.
+      var ate = Facraft.fx.tick(w, dt);
+      if (ate.length) {
+        w.health = Math.min(20, w.health + 2 * ate.length);
+        setNotice(ate[0] === 'pig' ? 'Pork chop! +2 HP' : 'Chicken! +2 HP');
+      }
       prof.meshMs += Date.now() - m0;
 
       // exportState every frame: the payload is small (scalars + inventory
