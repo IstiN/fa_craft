@@ -518,3 +518,18 @@ test('hotbar: digit keys 1-8 select the slot (hotbarN → hotbar{slot})', async 
   jsr.fireKey({ key: '3', code: 'Digit3', down: true, repeat: true });
   assert.strictEqual(F.state.selected, 8, 'repeat ignored');
 });
+
+test('physics: entity collision box follows halfW/height (mobs fit walls)', async () => {
+  const { sandbox } = await bootGame();
+  const F = sandbox.Facraft;
+  const w = F.state.world;
+  // a solid wall at x=1..2 spanning z: a chicken at x=0.5 with halfW 0.32
+  // must stop earlier than the player (HALF 0.3) would... and crucially a
+  // 0.5-half pig must not tunnel into it.
+  F.world.setBlock(w, 1, Math.floor(w.player.y), 0, F.blocks.STONE);
+  const pig = { x: -0.4, y: Math.floor(w.player.y), z: 0.5, halfW: 0.5, height: 1.25 };
+  const hit = F.physics.step(
+    Object.assign(pig, { vx: 0, vz: 0, vy: 0, yaw: Math.PI / 2, onGround: true }),
+    { forward: true }, w, 0.1, 'survival');
+  assert.ok(pig.x <= 0.51, 'fat pig blocked by the wall, x=' + pig.x);
+});

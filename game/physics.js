@@ -19,11 +19,15 @@ Facraft.physics = (function() {
     return B().isSolid(W().get(w, Math.floor(x), Math.floor(y), Math.floor(z)));
   }
 
-  // Does the player AABB at (x, y feet, z) overlap any solid voxel?
-  function collides(w, x, y, z) {
-    for (var bx = Math.floor(x - HALF); bx <= Math.floor(x + HALF); bx++) {
-      for (var by = Math.floor(y); by <= Math.floor(y + HEIGHT); by++) {
-        for (var bz = Math.floor(z - HALF); bz <= Math.floor(z + HALF); bz++) {
+  // Does the entity AABB at (x, y feet, z) overlap any solid voxel?
+  // Half-width / height default to the player dims; entities (mobs)
+  // carry their own so the collision box matches the visible body.
+  function collides(w, x, y, z, hw, h) {
+    if (hw === undefined) hw = HALF;
+    if (h === undefined) h = HEIGHT;
+    for (var bx = Math.floor(x - hw); bx <= Math.floor(x + hw); bx++) {
+      for (var by = Math.floor(y); by <= Math.floor(y + h); by++) {
+        for (var bz = Math.floor(z - hw); bz <= Math.floor(z + hw); bz++) {
           if (B().isSolid(W().get(w, bx, by, bz))) return true;
         }
       }
@@ -53,7 +57,9 @@ Facraft.physics = (function() {
       w,
       axis === 'x' ? cand : p.x,
       axis === 'y' ? cand : p.y,
-      axis === 'z' ? cand : p.z
+      axis === 'z' ? cand : p.z,
+      p.halfW,
+      p.height
     );
     return { pos: hit ? p[axis] : cand, blocked: hit };
   }

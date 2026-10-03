@@ -108,9 +108,12 @@ Facraft.mobs = (function() {
     for (var y = 63; y > 0; y--) {
       if (Facraft.blocks.isSolid(W().get(w, Math.floor(x), y, Math.floor(z)))) {
         w.nextMobId = (w.nextMobId || 0) + 1;
+        var type = (n % 2 === 0) ? 'pig' : 'chicken';
         w.mobs.push({
           id: w.nextMobId, // chunk keys survive splice renumbering
-          type: (n % 2 === 0) ? 'pig' : 'chicken',
+          type: type,
+          // collision box matches the visible body — no walking into walls
+          halfW: DIMS[type].half, height: DIMS[type].height,
           x: x, y: y + 1, z: z, yaw: ang, vy: 0, vx: 0, vz: 0,
           onGround: false, moving: false, think: 1 + n * 0.7,
           uploadKey: '',
