@@ -69,16 +69,17 @@ Facraft.mesh = (function() {
             if (!B().isSolid(b)) continue;
             q[A] = s + dn; q[U] = u; q[V] = v;
             if (B().isSolid(block(w, q[0], q[1], q[2], cx, cz))) continue;
-            var col = B().color(b);
-            // Per-block brightness jitter (±10%, deterministic on world
-            // position): the blocky texture feel without uv texturing —
-            // vertex colors interpolate artifact-free at any angle.
-            // The MERGE key below still uses the flat color, so jitter
-            // becomes per-rectangle and greedy merging is unaffected.
-            var wx0 = cx * 16 + p[0], wy0 = p[1], wz0 = cz * 16 + p[2];
-            var h = Math.sin(wx0 * 127.1 + wy0 * 311.7 + wz0 * 74.7) * 43758.5453;
-            var j = 0.9 + 0.2 * (h - Math.floor(h));
-            seedCol[v * SU + u] = [col[0] * j, col[1] * j, col[2] * j];
+            // Pixel-grain texturing: one of 4 per-type tones from a
+            // world-position hash (grass sides use the dirt palette).
+            // The MERGE key below IS the tone, so only same-tone
+            // neighbours merge — crisp per-block grain at ~2.5-4x the
+            // fully-merged triangle count, zero view-dependence.
+            var pal = B().palette(b, A !== 1);
+            var h = ((cx * 16 + p[0]) * 73856093) ^ (p[1] * 19349663) ^
+                    ((cz * 16 + p[2]) * 83492791);
+            h = (h ^ (h >>> 13)) >>> 0;
+            var col = pal[h & 3];
+            seedCol[v * SU + u] = col;
             MASK[v * SU + u] =
               ((Math.round(col[0] * 255) << 16) |
                 (Math.round(col[1] * 255) << 8) |

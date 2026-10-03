@@ -37,8 +37,10 @@ test('mesh: buried blocks cull — a 3×3×3 cube shows only its shell (greedy-m
     }
   }
   const m = F.mesh.buildChunk(w, 0, 0);
-  // Greedy merge: each 3x3 same-color side collapses to ONE quad.
-  assert.strictEqual(facesOf(m), 6, 'six merged side quads, got ' + facesOf(m));
+  // Greedy merge BY TONE: a 3x3 side collapses same-tone runs only.
+  // 54 unmerged side faces -> 42 quads under the 4-tone hash (pinned:
+  // the hash is deterministic, so this is an exact regression guard).
+  assert.strictEqual(facesOf(m), 42, 'tone-bounded merged side quads, got ' + facesOf(m));
   // …but the visible surface AREA must be exactly the 54 unit faces.
   assert.strictEqual(totalArea(m), 54, 'merged surface area == shell area');
 });
@@ -83,7 +85,9 @@ test('mesh: flat 16×16 plate merges each side into one quad', async () => {
     for (let z = 0; z < 16; z++) F.world.setBlock(w, x, 40, z, F.blocks.STONE);
   }
   const m = F.mesh.buildChunk(w, 0, 0);
-  assert.strictEqual(facesOf(m), 6, 'one quad per plate side, got ' + facesOf(m));
+  // 576 unmerged faces -> 446 quads under the 4-tone hash (deterministic
+  // pin, same contract as the cube test above).
+  assert.strictEqual(facesOf(m), 446, 'tone-bounded plate merge, got ' + facesOf(m));
   assert.strictEqual(totalArea(m), 16 * 16 * 2 + 16 * 4, 'plate surface area');
 });
 
@@ -139,23 +143,47 @@ test('mesh: border edit dirties the adjacent chunk too', async () => {
   assert.ok(built.includes('-1,0'), 'neighbor chunk rebuilt (face culling changes)');
 });
 
-test('mesh: per-block brightness jitter is deterministic, bounded, merge-safe', async () => {
+test('mesh: per-block tone hash is deterministic, palette-bound, merge-safe', async () => {
   const { F } = await loadNamespace(MODS);
-  const base = F.blocks.color(F.blocks.STONE);
-  function jitterAt(x, y, z) {
+  const palette = F.blocks.palette(F.blocks.STONE, false);
+  function toneAt(x, y, z) {
     const w = stubWorld(F);
     F.world.setBlock(w, x, y, z, F.blocks.STONE);
-    return F.mesh.buildChunk(w, 0, 0).colors[0] / base[0];
+    const m = F.mesh.buildChunk(w, 0, 0);
+    return [m.colors[0], m.colors[1], m.colors[2]];
   }
-  const jA = jitterAt(0, 40, 0);
-  const jB = jitterAt(8, 40, 8);
-  assert.strictEqual(jitterAt(0, 40, 0), jA, 'same world -> same jitter');
-  assert.ok(jA >= 0.9 && jA <= 1.1, 'jitter A bounded: ' + jA);
-  assert.ok(jB >= 0.9 && jB <= 1.1, 'jitter B bounded: ' + jB);
-  assert.ok(Math.abs(jA - jB) > 1e-6, 'different blocks get different jitter');
-  // Flat per face: all four corners of a face carry the same jittered color.
+  assert.deepStrictEqual(toneAt(0, 40, 0), toneAt(0, 40, 0), 'same world -> same tone');
+  const tones = new Set();
+  for (let x = 0; x < 8; x++) {
+    const c = toneAt(x, 40, x);
+    tones.add(c.join(','));
+    const inPalette = palette.some((p) =>
+      Math.abs(p[0] - c[0]) < 1e-9 && Math.abs(p[1] - c[1]) < 1e-9 && Math.abs(p[2] - c[2]) < 1e-9);
+    assert.ok(inPalette, 'tone comes from the stone palette: ' + c);
+  }
+  assert.ok(tones.size >= 2, 'tone hash varies across blocks: ' + tones.size);
+  // Flat per face: all four corners of a face carry the same tone.
   const w = stubWorld(F);
   F.world.setBlock(w, 0, 40, 0, F.blocks.STONE);
   const m = F.mesh.buildChunk(w, 0, 0);
   for (let v = 1; v < 4; v++) assert.strictEqual(m.colors[v * 3], m.colors[0]);
+});
+
+test('mesh: grass side faces use the dirt-tinted palette, tops stay green', async () => {
+  const { F } = await loadNamespace(MODS);
+  const w = stubWorld(F);
+  F.world.setBlock(w, 4, 40, 4, F.blocks.GRASS);
+  const m = F.mesh.buildChunk(w, 0, 0);
+  // Find the top face (normal +y: all four verts at y = 41) and a side face.
+  let topR = -1, sideR = -1;
+  for (let q = 0; q < m.indices.length; q += 6) {
+    const v = m.indices[q] * 3;
+    if (m.positions[v + 1] === 41 && topR < 0) topR = m.colors[v];
+    if (m.positions[v + 1] === 40 && sideR < 0) sideR = m.colors[v];
+  }
+  assert.ok(topR > 0, 'top face found');
+  assert.ok(sideR > 0, 'side face found');
+  assert.ok(m.colors[0] >= 0, 'colors readable');
+  // Top greens out-red the dirt sides on the green channel relative to red.
+  assert.ok(topR < 0.45 && sideR >= 0.4, 'grass top green, sides brownish');
 });

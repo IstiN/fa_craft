@@ -21,7 +21,7 @@ import './voxel.js';
 (function() {
   // Keep in sync with manifest.json — test/ut_version pins it. Logged in
   // the status line so field reports name the exact build they ran.
-  var VERSION = '0.2.16';
+  var VERSION = '0.2.17';
   Facraft.version = VERSION;
 
   var B = Facraft.blocks, W = Facraft.world, P = Facraft.physics,
