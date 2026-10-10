@@ -68,6 +68,7 @@ function fakeJsr() {
   const calls = [];
   const rafQ = [];
   const intervals = [];
+  const timeouts = [];
   const eventHandlers = [];
   const keyHandlers = [];
   const storage = fakeStorage();
@@ -92,8 +93,11 @@ function fakeJsr() {
     hostCall(name, args) {
       calls.push(['hostCall:' + name, approximateJsonSize(args)]);
       if (name === 'voxel.attach') {
-        // host capability probe: rejectable so tests can force the legacy
-        // scene3d path (bootGame({ voxelNative: false })).
+        // host capability probe: rejectable so tests can force the
+        // unsupported-update-card path (bootGame({ voxelNative: false }));
+        // 'hang' never settles, so the widget's 2 s probe timeout is
+        // the only way the probe lands.
+        if (jsr.voxelNative === 'hang') return new Promise(() => {});
         return jsr.voxelNative === false
           ? Promise.reject(new Error('no voxel support'))
           : Promise.resolve({ ok: true });
@@ -104,12 +108,13 @@ function fakeJsr() {
     hostHandlers: {},
     voxelNative: true,
     requestAnimationFrame(fn) { rafQ.push(fn); return rafQ.length; },
-    setTimeout(fn, ms) { return 0; },
+    setTimeout(fn, ms) { timeouts.push(fn); return timeouts.length; },
     clearTimeout() {},
     setInterval(fn, ms) { intervals.push(fn); return intervals.length; },
     clearInterval() {},
     // --- test controls ---
     intervals,
+    fireTimeouts() { timeouts.splice(0).forEach((fn) => fn()); },
     exported: () => exportState,
     fire(actionId, payload) {
       calls.push(['event:' + actionId, 0]);
@@ -144,7 +149,7 @@ async function bootGame(opts) {
   const jsr = fakeJsr();
   if (opts && opts.hostHandlers) Object.assign(jsr.hostHandlers, opts.hostHandlers);
   if (opts && opts.storage) Object.assign(jsr.storage, opts.storage);
-  if (opts && opts.voxelNative === false) jsr.voxelNative = false;
+  if (opts && 'voxelNative' in opts) jsr.voxelNative = opts.voxelNative;
   const seen = new Set();
   const out = [];
   bundle('game/main.js', 1, seen, out);

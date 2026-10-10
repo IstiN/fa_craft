@@ -102,7 +102,7 @@ Facraft.hud = (function() {
           child: {
             type: 'gestureDetector', onTap: 'place', onPanUpdate: 'look',
             onScroll: 'scrollLook',
-            child: F.voxel.view(w, w.player, sky, state.target),
+            child: F.voxel.view(),
           },
         },
         { // virtual joystick pad (touch walk) — parked above the hotbar strip:
@@ -230,7 +230,7 @@ Facraft.hud = (function() {
     var pr = Facraft.prof;
     if (pr) {
       lines.push(
-        'pipe ' + (Facraft.voxel.isNative() ? 'voxel' : 'scene3d'),
+        'pipe ' + (Facraft.voxel.isNative() ? 'voxel' : 'unsupported'),
         'hud ' + (pr.hudMs / Math.max(1, pr.frames)).toFixed(1) +
           'ms mesh ' + (pr.meshMs / Math.max(1, pr.frames)).toFixed(1) + 'ms',
         'up ' + pr.uploads + ' (' + Math.round(pr.meshBytes / 1024) + 'KB)'
