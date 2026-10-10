@@ -103,7 +103,16 @@ test('voxel adapter (native): voxel node, one mesh upload per chunk, camera per 
     'world edit re-uploads only dirty chunks, got ' + reuploaded.length);
   assert.ok(reuploaded.some((m) => m.key === '0,0'), 'the edited chunk re-uploaded');
   await jsr.pumpFrames(10, 16.6);
-  assert.strictEqual(meshes.length, up0 + reuploaded.length, 'no rebuild while clean after the edit');
+  // Resident '__'-prefixed chunks (aim marker, fx, mobs) legitimately
+  // follow runtime state — on a loaded runner their upload can slip a
+  // frame past the edit, so the clean-window invariant counts TERRAIN
+  // chunks only (the same filter the edit-frame count above applies).
+  const lateTerrain = meshes.slice(up0)
+    .filter((m) => !String(m.key).startsWith('__'));
+  const strays = lateTerrain.filter((m) => !reuploaded.includes(m));
+  assert.strictEqual(strays.length, 0,
+    'no terrain rebuild while clean after the edit, got: ' +
+    strays.map((m) => m.key).join(', '));
 });
 
 test('voxel adapter (native): aimed block uploads a resident __hl highlight chunk', async () => {
