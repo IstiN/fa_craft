@@ -70,6 +70,28 @@ test('worldgen: biome-lite surface materials exist (grass and sand patches)', as
   assert.ok(found.has(F.blocks.STONE) || found.has(F.blocks.DIRT), 'subsurface material expected');
 });
 
+test('worldgen: analytical groundY matches a generated-chunk column scan', async () => {
+  const { F } = await loadNamespace(MODS);
+  for (const seed of [1, 42, 777, 1210892288]) {
+    const chunks = new Map(); // one generation per chunk, scanned per column
+    for (let wx = -40; wx <= 40; wx += 7) {
+      for (let wz = -40; wz <= 40; wz += 7) {
+        const cx = Math.floor(wx / 16), cz = Math.floor(wz / 16);
+        const ck = cx + ',' + cz;
+        if (!chunks.has(ck)) chunks.set(ck, F.worldgen.chunk(seed, cx, cz));
+        const c = chunks.get(ck);
+        const lx = wx - cx * 16, lz = wz - cz * 16;
+        let scan = 0;
+        for (let y = F.worldgen.CHUNK_Y - 1; y >= 0; y--) {
+          if (c[F.worldgen.index(lx, y, lz)] !== 0) { scan = y; break; }
+        }
+        assert.strictEqual(F.worldgen.groundY(seed, wx, wz), scan,
+          'seed ' + seed + ' column ' + wx + ',' + wz);
+      }
+    }
+  }
+});
+
 test('worldgen: caves carve air below the surface', async () => {
   const { F } = await loadNamespace(MODS);
   let caveAir = 0;

@@ -75,6 +75,7 @@ function fakeJsr() {
   let exportState = {};
   const jsr = {
     calls,
+    trees: [],
     storage,
     instanceId: 'test-inst',
     theme: {
@@ -82,7 +83,7 @@ function fakeJsr() {
       border: '#334155', borderBright: '#475569', accent: '#818cf8',
       accent2: '#a78bfa', onAccent: '#0f172a', text: '#f1f5f9', muted: '#64748b',
     },
-    render(tree) { calls.push(['render', 0]); jsr.lastTree = tree; },
+    render(tree) { calls.push(['render', 0]); jsr.lastTree = tree; jsr.trees.push(tree); },
     setTitle(t) { calls.push(['setTitle', 0]); jsr.title = t; },
     exportState(obj) { calls.push(['exportState', 0]); exportState = obj; },
     showError(msg) { calls.push(['showError', 0]); jsr.error = msg; },

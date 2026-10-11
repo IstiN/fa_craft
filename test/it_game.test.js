@@ -71,7 +71,9 @@ test('voxel adapter (native): voxel node, one mesh upload per chunk, camera per 
     },
   });
   const F = sandbox.Facraft;
-  await jsr.pumpFrames(5, 16.6);
+  // The boot ring STREAMS in (3 chunks/frame cap, nearest first), so the
+  // full 5x5 ring needs ~9 frames — pump 12 for margin.
+  await jsr.pumpFrames(12, 16.6);
   const node = findNode(jsr.lastTree, (n) => n.type === 'voxel');
   assert.ok(node, 'voxel viewport node in the render tree');
   assert.strictEqual(findNode(jsr.lastTree, (n) => n.type === 'scene3d'), null,
@@ -113,6 +115,39 @@ test('voxel adapter (native): voxel node, one mesh upload per chunk, camera per 
   assert.strictEqual(strays.length, 0,
     'no terrain rebuild while clean after the edit, got: ' +
     strays.map((m) => m.key).join(', '));
+});
+
+test('boot: the first rendered tree is the splash, the HUD replaces it', async () => {
+  const { jsr } = await bootGame();
+  assert.ok(jsr.trees.length >= 2, 'splash then HUD rendered');
+  const splash = jsr.trees[0];
+  assert.ok(findNode(splash, (n) => n.type === 'text' && n.data === '⛏ Fa Craft'),
+    'splash shows the game title');
+  assert.ok(findNode(splash, (n) => n.type === 'text' && /loading/i.test(String(n.data))),
+    'splash shows a loading hint');
+  assert.strictEqual(findNode(splash, (n) => n.type === 'voxel'), null,
+    'splash carries no viewport — it is a pure loading card');
+  assert.ok(findNode(jsr.lastTree, (n) => n.type === 'voxel'),
+    'the HUD with the voxel viewport follows once the world is ready');
+});
+
+test('voxel adapter (native): boot streams the ring frame-capped, nearest first', async () => {
+  const meshes = [];
+  const { jsr } = await bootGame({
+    hostHandlers: {
+      'voxel.mesh': (a) => { meshes.push(a); return true; },
+      'voxel.camera': () => true,
+    },
+  });
+  const terrain = () => meshes.filter((m) => !String(m.key).startsWith('__'));
+  await jsr.pumpFrames(1, 16.6);
+  assert.ok(terrain().length >= 1 && terrain().length <= 3,
+    'the first frame uploads at most the per-frame cap, got ' + terrain().length);
+  assert.ok(terrain().some((m) => m.key === '0,0'),
+    'nearest-first: the player chunk streams in frame 1');
+  await jsr.pumpFrames(12, 16.6);
+  assert.ok(terrain().length >= 25,
+    'the full 5x5 ring lands within a dozen frames, got ' + terrain().length);
 });
 
 test('voxel adapter (native): aimed block uploads a resident __hl highlight chunk', async () => {

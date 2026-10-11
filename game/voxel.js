@@ -84,23 +84,35 @@ Facraft.voxel = (function() {
     }
   }
 
-  // Upload the chunks of the view ring that are new or dirty. Dirty chunks
-  // outside the ring stay marked and upload when the ring reaches them.
+  // Upload the chunks of the view ring that are new or dirty, at most
+  // UPLOADS_PER_FRAME per call, nearest-to-player first. The boot wall
+  // from the field report was this loop uploading the whole 5x5 ring
+  // (~25 chunk worldgens + ~2 MB of mesh JSON) in ONE frame — streaming
+  // spreads it over ~9 frames so the first pixels land in <100 ms and
+  // the terrain pops in Minecraft-style. Dirty chunks outside the ring
+  // stay marked and upload when the ring reaches them.
   // When the player crosses a chunk boundary, chunks beyond the ring+1
   // margin are evicted (voxel.chunkRemove) so long walks do not grow the
   // resident set — and the per-frame painter triangle count — forever.
   var lastEvictPcx = null, lastEvictPcz = null;
+  var UPLOADS_PER_FRAME = 3;
 
   function sync(w, player, prof) {
-    if (!isNative()) return;
+    if (!isNative()) return { uploaded: 0, pending: 0 };
     var pcx = Math.floor(player.x / 16), pcz = Math.floor(player.z / 16);
+    var todo = [];
     for (var dx = -VIEW_RADIUS; dx <= VIEW_RADIUS; dx++) {
       for (var dz = -VIEW_RADIUS; dz <= VIEW_RADIUS; dz++) {
         var cx = pcx + dx, cz = pcz + dz, key = cx + ',' + cz;
         if (uploaded[key] && !w.dirty.has(key)) continue;
-        uploadChunk(w, cx, cz, prof);
-        w.dirty.delete(key);
+        todo.push({ cx: cx, cz: cz, key: key, d2: dx * dx + dz * dz });
       }
+    }
+    todo.sort(function(a, b) { return a.d2 - b.d2; });
+    var n = Math.min(UPLOADS_PER_FRAME, todo.length);
+    for (var i = 0; i < n; i++) {
+      uploadChunk(w, todo[i].cx, todo[i].cz, prof);
+      w.dirty.delete(todo[i].key);
     }
     if (pcx !== lastEvictPcx || pcz !== lastEvictPcz) {
       lastEvictPcx = pcx; lastEvictPcz = pcz;
@@ -114,6 +126,7 @@ Facraft.voxel = (function() {
         }
       }
     }
+    return { uploaded: n, pending: todo.length - n };
   }
 
   // Aimed-face marker: a bright border RING on the raycast entry face —
