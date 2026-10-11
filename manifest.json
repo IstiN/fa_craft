@@ -2,7 +2,7 @@
   "id": "fa-craft",
   "name": "Fa Craft",
   "description": "Minecraft-like voxel sandbox with light survival \u2014 fully local, plays on macOS, iOS, Android and web.",
-  "version": "0.2.20",
+  "version": "0.2.21",
   "icon": "\u26cf\ufe0f",
   "allowedCommands": [],
   "network": false,
@@ -16,6 +16,14 @@
       {
         "id": "break",
         "description": "Break the targeted block"
+      },
+      {
+        "id": "breakHold",
+        "description": "Start hold-to-mine (long press): breaks the targeted block and repeats every 280 ms until breakEnd"
+      },
+      {
+        "id": "breakEnd",
+        "description": "Stop hold-to-mine"
       },
       {
         "id": "place",

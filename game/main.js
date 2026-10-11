@@ -22,7 +22,7 @@ import './voxel.js';
 (function() {
   // Keep in sync with manifest.json — test/ut_version pins it. Logged in
   // the status line so field reports name the exact build they ran.
-  var VERSION = '0.2.20';
+  var VERSION = '0.2.21';
   Facraft.version = VERSION;
 
   var B = Facraft.blocks, W = Facraft.world, P = Facraft.physics,
@@ -47,6 +47,10 @@ import './voxel.js';
   };
   var held = {};
   var joy = { active: false, x: 0, z: 0 };
+  var joyIdleFrames = 0;     // ticks since the last joyMove — lost-stream guard
+  var jumpImpulseTicks = 0;  // quick tap = a minimum-length jump impulse
+  var breakHold = false;     // long-press mining (viewport)
+  var breakCooldown = 0;     // tMs of the next allowed repeat-break
   var lastFrame = 0;
   var bootReady = false;
   var lastHudSig = '';
@@ -178,7 +182,9 @@ import './voxel.js';
     }
   }
 
-  function onBreak() {
+  // silent=true: the long-press repeat path — holding the crosshair on air
+  // must not spam 'Nothing in reach.' every repeat interval.
+  function breakOnce(silent) {
     // Livestock first: a mob in front of the eye (closer than the aimed
     // block or simply point-blank) takes the hit — butchering drops meat.
     var p0 = state.world.player;
@@ -199,7 +205,7 @@ import './voxel.js';
       return;
     }
     var tb = pickTarget();
-    if (!tb.hit) { setNotice('Nothing in reach.'); return; }
+    if (!tb.hit) { if (!silent) setNotice('Nothing in reach.'); return; }
     var broken = Facraft.world.get(state.world, tb.x, tb.y, tb.z);
     try {
       W.apply(state.world, { t: 'set', x: tb.x, y: tb.y, z: tb.z, b: B.AIR });
@@ -207,6 +213,20 @@ import './voxel.js';
         B.palette(broken, false), 14);
     } catch (e) { setNotice(e.message); }
   }
+
+  function onBreak() { breakOnce(false); }
+
+  // Long-press mining (Minecraft touch): the hold breaks immediately, then
+  // the tick repeats every BREAK_REPEAT_MS until breakEnd (long-press end
+  // OR cancel — a stolen pointer must stop the mining too). The cooldown is
+  // anchored at the last tick so the hold start does not double-break.
+  var BREAK_REPEAT_MS = 280;
+  function onBreakHold() {
+    breakHold = true;
+    breakCooldown = lastFrame + BREAK_REPEAT_MS;
+    breakOnce(true);
+  }
+  function onBreakEnd() { breakHold = false; }
 
   function onPlace() {
     var blockId = hotbarBlocks()[state.selected - 1];
@@ -268,6 +288,7 @@ import './voxel.js';
 
   function onJoyMove(payload) {
     joy.active = true;
+    joyIdleFrames = 0;
     // The pad is 96x96: pan localPosition (x, y) minus the pad center is
     // the stick offset. (dx/dy are PER-EVENT deltas — using them as the
     // stick vector scaled movement to ~4% and read as "move is broken".)
@@ -280,7 +301,13 @@ import './voxel.js';
   function onJoyEnd() { joy.active = false; joy.x = 0; joy.z = 0; }
 
   // Touch jump pad: hold-to-hop — physics reads input.jump every step.
-  function onJumpDown() { held.jumpPad = true; }
+  // A quick tap arrives as tapDown+tapUp within one frame boundary and can
+  // slip between ticks unseen, so every press buys an 11-tick (~180 ms)
+  // impulse window: a tap always hops once, a hold keeps hopping. Frame-
+  // counted, not wall-clock, so frozen-clock CLI runs stay deterministic.
+  // (The pad's onTapCancel is wired to jumpUp too — a stolen pointer must
+  // not stick the hop on.)
+  function onJumpDown() { held.jumpPad = true; jumpImpulseTicks = 11; }
   function onJumpUp() { held.jumpPad = false; }
 
   function onPointerLock(payload) {
@@ -293,6 +320,7 @@ import './voxel.js';
 
   var ACTIONS = {
     hotbar: onHotbar, break: onBreak, place: onPlace,
+    breakHold: onBreakHold, breakEnd: onBreakEnd,
     craft: onCraft, closeCraft: function() { state.craftOpen = false; },
     craftRecipe: onCraftRecipe, fly: onFly, mode: onMode,
     respawn: onRespawn, debug: function() { state.debug = !state.debug; },
@@ -326,6 +354,34 @@ import './voxel.js';
 
   // --- loop ---------------------------------------------------------------
 
+  // Per-tick input assembly + held-gesture timers. Extracted from tick so
+  // the loop body stays flat (CRAP ratchet).
+  function collectInput(tMs) {
+    var input = {
+      forward: held.forward === true, back: held.back === true,
+      left: held.left === true, right: held.right === true,
+      jump: held.jump === true || held.jumpPad === true ||
+        jumpImpulseTicks > 0,
+      sneak: held.sneak === true,
+      sprint: held.sprint === true,
+      moveS: joy.active ? joy.x : 0, moveF: joy.active ? joy.z : 0,
+    };
+    if (jumpImpulseTicks > 0) jumpImpulseTicks--;
+    // Lost-stream guard: panEnd/panCancel normally release the stick, but
+    // if the event stream dies mid-drag the player would run forever —
+    // ~20 silent ticks (~330 ms at 60 fps) with no joyMove auto-releases.
+    if (joy.active) {
+      joyIdleFrames++;
+      if (joyIdleFrames > 20) onJoyEnd();
+    }
+    // Long-press mining repeats on the frame clock while the hold lasts.
+    if (breakHold && tMs >= breakCooldown) {
+      breakCooldown = tMs + BREAK_REPEAT_MS;
+      breakOnce(true);
+    }
+    return input;
+  }
+
   function tick(tMs) {
     if (bootReady && state.world) {
       var dt = lastFrame ? Math.min((tMs - lastFrame) / 1000, P.DT_MAX) : 0;
@@ -336,14 +392,7 @@ import './voxel.js';
       var w = state.world;
       w.dayTime = D.advance(w.dayTime, dt);
 
-      var input = {
-        forward: held.forward === true, back: held.back === true,
-        left: held.left === true, right: held.right === true,
-        jump: held.jump === true || held.jumpPad === true,
-        sneak: held.sneak === true,
-        sprint: held.sprint === true,
-        moveS: joy.active ? joy.x : 0, moveF: joy.active ? joy.z : 0,
-      };
+      var input = collectInput(tMs);
       var res = P.step(w.player, input, w, dt, w.mode);
       if (res.landed > 0) {
         var dmg = S.landing(w, res.landed).damage;

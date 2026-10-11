@@ -18,6 +18,12 @@ Facraft.hud = (function() {
     var count = state.world.mode === 'creative' ? '∞' : String(state.world.inventory[id] || 0);
     var c = B().color(id);
     return {
+      // The slot itself carries the tap: payload.slot routes to the same
+      // 'hotbar' action the digit keys fire (runtime >= 0.4.157 payload
+      // merge; older runtimes fire a bare 'hotbar' = cycle — degraded but
+      // never dead).
+      type: 'gestureDetector', onTap: 'hotbar', payload: { slot: index },
+      child: {
       type: 'container', hotbarIndex: index,
       width: 46, height: 46,
       decoration: {
@@ -36,6 +42,7 @@ Facraft.hud = (function() {
             child: { type: 'text', data: count,
               style: { fontSize: 11, fontWeight: 'bold', color: '#ffffff' } } },
         ],
+      },
       },
     };
   }
@@ -80,7 +87,7 @@ Facraft.hud = (function() {
         type: 'container', positioned: { left: 0, right: 0, bottom: 176 },
         ignorePointer: true, // labels must never eat look-drags (runtime >=0.4.133)
         decoration: { color: '#00000066' }, padding: [10, 4, 10, 4],
-        child: { type: 'center', child: { type: 'text', data: 'Drag to look · drag the pad to walk', style: { fontSize: 11, color: t.text }, width: 320 } },
+        child: { type: 'center', child: { type: 'text', data: 'Drag to look · tap to place · hold to break', style: { fontSize: 11, color: t.text }, width: 320 } },
       });
     }
     if (state.debug) {
@@ -94,14 +101,20 @@ Facraft.hud = (function() {
 
     var gameStack = {
       type: 'stack', children: [
-        { // viewport area: drag = look, tap = place; the voxel node paints
-          // the world from bridge-resident chunk buffers (I4). onScroll
-          // routes two-finger trackpad swipes into the same look action
-          // (pointer scroll signals are not drags — runtime >=0.4.131).
+        { // viewport area: drag = look, tap = place, long hold = break
+          // (Minecraft touch scheme — stationary hold wins the gesture
+          // arena, a moved finger loses to the look-drag). The voxel node
+          // paints the world from bridge-resident chunk buffers (I4).
+          // onScroll routes two-finger trackpad swipes into the same look
+          // action (pointer scroll signals are not drags — runtime >=0.4.131).
+          // Long-press + payload need runtime >= 0.4.157; older runtimes
+          // keep tap-to-place + the Break button.
           type: 'container', positioned: { left: 0, top: 0, right: 0, bottom: 0 },
           child: {
             type: 'gestureDetector', onTap: 'place', onPanUpdate: 'look',
             onScroll: 'scrollLook',
+            onLongPressStart: 'breakHold',
+            onLongPressEnd: 'breakEnd', onLongPressCancel: 'breakEnd',
             child: F.voxel.view(),
           },
         },
@@ -109,7 +122,10 @@ Facraft.hud = (function() {
           // at bottom-left it painted over the first hotbar slot
           type: 'container', positioned: { left: 16, bottom: 72 },
           child: {
+            // panCancel: an OS-stolen pointer (iOS edge gesture) must
+            // release the stick, not leave the player running (>=0.4.157).
             type: 'gestureDetector', onPanUpdate: 'joyMove', onPanEnd: 'joyEnd',
+            onPanCancel: 'joyEnd',
             child: {
               type: 'container', width: 96, height: 96,
               decoration: { color: t.surfaceAlt, borderRadius: 48, borderColor: t.borderBright, borderWidth: 1 },
@@ -117,10 +133,13 @@ Facraft.hud = (function() {
             },
           },
         },
-        { // jump pad (touch): hold to hop — right-bottom, mirrors the joystick
+        { // jump pad (touch): hold to hop — right-bottom, mirrors the joystick.
+          // tapCancel covers the OS-stolen tap AFTER tapDown landed — without
+          // it the jump stays held forever (>=0.4.157).
           type: 'container', positioned: { right: 16, bottom: 72 },
           child: {
             type: 'gestureDetector', onTapDown: 'jumpDown', onTapUp: 'jumpUp',
+            onTapCancel: 'jumpUp',
             onPanEnd: 'jumpUp',
             child: {
               type: 'container', width: 96, height: 96,

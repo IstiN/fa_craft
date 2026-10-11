@@ -231,6 +231,10 @@ test('input: joystick stick offset comes from pan POSITION, not per-event deltas
   const { jsr, sandbox } = await bootGame();
   const F = sandbox.Facraft;
   await jsr.pumpFrames(1, 16.6);
+  // Lift the player high into the air: mid-air movement keeps the assertion
+  // independent of the random seed's terrain (a cliff or tree ahead of the
+  // spawn would legitimately block the walk and flake the test).
+  F.state.world.player.y += 30;
   const p0 = { x: F.state.world.player.x, z: F.state.world.player.z };
   // Stick dragged to the top edge of the 96x96 pad: localPosition y ~ 8.
   jsr.fire('joyMove', { x: 48, y: 8 });
@@ -239,6 +243,96 @@ test('input: joystick stick offset comes from pan POSITION, not per-event deltas
   const dz = F.state.world.player.z - p0.z;
   const dx = F.state.world.player.x - p0.x;
   assert.ok(Math.hypot(dx, dz) > 0.5, 'full-deflection stick actually walks: ' + Math.hypot(dx, dz));
+});
+
+test('input: a lost joystick stream auto-releases the stick (watchdog)', async () => {
+  const { jsr, sandbox } = await bootGame();
+  const F = sandbox.Facraft;
+  await jsr.pumpFrames(1, 16.6);
+  jsr.fire('joyMove', { x: 48, y: 8 }); // engage — then the stream dies
+  await jsr.pumpFrames(30, 16.6);       // > 20 silent ticks: watchdog fires
+  const p1 = { x: F.state.world.player.x, z: F.state.world.player.z };
+  await jsr.pumpFrames(15, 16.6);
+  const dx = F.state.world.player.x - p1.x, dz = F.state.world.player.z - p1.z;
+  assert.ok(Math.hypot(dx, dz) < 0.15,
+    'no joyEnd/panCancel ever arrived, yet the player stopped: ' + Math.hypot(dx, dz));
+});
+
+test('input: a quick jump tap still hops (minimum impulse window)', async () => {
+  const { jsr, sandbox } = await bootGame();
+  const F = sandbox.Facraft;
+  // NOTE: one pumpFrames call — each call restarts the frame clock, so the
+  // first frame of every later batch gets dt=0 (harness artifact).
+  await jsr.pumpFrames(2, 16.6);
+  // Guarantee headroom: a tree canopy above the spawn would otherwise eat
+  // the hop (seed-dependent flake).
+  const p = F.state.world.player;
+  const fx = Math.floor(p.x), fy = Math.floor(p.y), fz = Math.floor(p.z);
+  for (let i = 1; i <= 3; i++) F.world.setBlock(F.state.world, fx, fy + i, fz, F.blocks.AIR);
+  const y0 = F.state.world.player.y;
+  jsr.fire('jumpDown');
+  jsr.fire('jumpUp'); // tap shorter than one frame — must not be lost
+  await jsr.pumpFrames(8, 16.6);
+  const dy = F.state.world.player.y - y0;
+  assert.ok(dy > 0.2, 'quick tap produced a real hop: ' + dy);
+});
+
+test('input: hotbar slots are tappable gesture detectors with slot payloads', async () => {
+  const { jsr } = await bootGame();
+  await jsr.pumpFrames(1, 16.6);
+  const slots = [];
+  (function walk(n) {
+    if (!n || typeof n !== 'object') return;
+    if (n.type === 'gestureDetector' && n.onTap === 'hotbar') slots.push(n);
+    for (const k of Object.keys(n)) walk(n[k]);
+  })(jsr.lastTree);
+  assert.strictEqual(slots.length, 8, 'every hotbar slot is tappable');
+  // The tree comes from a vm sandbox — deepStrictEqual would fail on the
+  // cross-realm prototype; compare the field.
+  assert.strictEqual(slots[2].payload.slot, 3,
+    'slot 3 fires hotbar with {slot: 3} — the same action the digit key fires');
+  jsr.fire('hotbar', { slot: 3 });
+  assert.strictEqual(jsr.exported().selected, 3);
+});
+
+test('input: long-press into the sky is a silent no-op; breakEnd stops mining', async () => {
+  const { jsr, sandbox } = await bootGame();
+  const F = sandbox.Facraft;
+  await jsr.pumpFrames(1, 16.6);
+  // Straight up — and clear a shaft first: a hill above the horizon or a
+  // tree canopy overhead would otherwise be a legitimate target (seed
+  // flake).
+  const p = F.state.world.player;
+  const fx = Math.floor(p.x), fy = Math.floor(p.y), fz = Math.floor(p.z);
+  for (let i = 1; i <= 8; i++) F.world.setBlock(F.state.world, fx, fy + i, fz, F.blocks.AIR);
+  p.pitch = Math.PI / 2 - 0.01;
+  const ops0 = F.state.world.logOps.length; // includes the shaft clearing
+  jsr.fire('breakHold');
+  await jsr.pumpFrames(40, 16.6); // ~660 ms of holding: repeats included
+  assert.strictEqual(F.state.world.logOps.length, ops0,
+    'no phantom edits while holding on air');
+  assert.strictEqual(jsr.exported().notice || '', '',
+    '…and no notice spam while holding on air');
+  jsr.fire('breakEnd');
+});
+
+test('input: long-press hold mines straight down through a column', async () => {
+  const { jsr, sandbox } = await bootGame();
+  const F = sandbox.Facraft;
+  const p = F.state.world.player;
+  // Settle onto the ground (fresh spawn floats 1 cm; a water/canopy spawn
+  // may take longer) — retry in small batches until landed.
+  for (let i = 0; i < 8 && !p.onGround; i++) await jsr.pumpFrames(2, 16.6);
+  assert.ok(p.onGround, 'landed before mining');
+  p.pitch = -Math.PI / 2 + 0.01; // straight down at the block underfoot
+  const ops0 = F.state.world.logOps.length;
+  jsr.fire('breakHold'); // immediate break…
+  assert.strictEqual(F.state.world.logOps.length, ops0 + 1,
+    'long-press start broke the block underfoot');
+  await jsr.pumpFrames(25, 16.6); // ~415 ms — one 280 ms repeat window passes
+  jsr.fire('breakEnd');
+  const edits = F.state.world.logOps.length - ops0;
+  assert.ok(edits >= 2, 'hold kept mining the next block down: ' + edits + ' edits');
 });
 
 test('voxel adapter: failed probe renders the update card — no scene3d fallback', async () => {
