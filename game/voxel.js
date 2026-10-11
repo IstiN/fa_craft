@@ -96,6 +96,7 @@ Facraft.voxel = (function() {
   // resident set — and the per-frame painter triangle count — forever.
   var lastEvictPcx = null, lastEvictPcz = null;
   var UPLOADS_PER_FRAME = 3;
+  var GENS_PER_FRAME = 2;  // data-only worldgen warm-up budget per frame
 
   function sync(w, player, prof) {
     if (!isNative()) return { uploaded: 0, pending: 0 };
@@ -113,6 +114,27 @@ Facraft.voxel = (function() {
     for (var i = 0; i < n; i++) {
       uploadChunk(w, todo[i].cx, todo[i].cz, prof);
       w.dirty.delete(todo[i].key);
+    }
+    // Worldgen smoothing: data-only warm-up of the ring+1 margin, biased
+    // toward the direction of travel. Sprinting into fresh terrain used to
+    // burst ~5 lazy chunk generations (world.js get → worldgen.chunk) plus
+    // their mesh builds into the boundary-crossing frames — the mobile
+    // stutter report. Spreading generation over the approach keeps every
+    // frame's worldgen work bounded.
+    var cold = [];
+    for (var gx = -VIEW_RADIUS - 1; gx <= VIEW_RADIUS + 1; gx++) {
+      for (var gz = -VIEW_RADIUS - 1; gz <= VIEW_RADIUS + 1; gz++) {
+        if (!w.chunks[(pcx + gx) + ',' + (pcz + gz)]) {
+          var ahead = (player.vx || 0) * gx + (player.vz || 0) * gz;
+          cold.push({ cx: pcx + gx, cz: pcz + gz, ahead: -ahead,
+                      d2: gx * gx + gz * gz });
+        }
+      }
+    }
+    cold.sort(function(a, b) { return (a.ahead - b.ahead) || (a.d2 - b.d2); });
+    var warm = Math.min(GENS_PER_FRAME, cold.length);
+    for (var g = 0; g < warm; g++) {
+      Facraft.world.pregen(w, cold[g].cx, cold[g].cz);
     }
     if (pcx !== lastEvictPcx || pcz !== lastEvictPcz) {
       lastEvictPcx = pcx; lastEvictPcz = pcz;

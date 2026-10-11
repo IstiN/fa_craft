@@ -171,6 +171,10 @@ Facraft.world = (function() {
   return {
     create: create, fromLog: fromLog, apply: apply, setBlock: setBlock,
     get: get, key: key, ensureArea: ensureArea, validate: validate,
+    // Data-only warm-up: runs the worldgen for a chunk without meshing or
+    // uploading it, so a later mesh build / physics probe hits the cache
+    // instead of bursting worldgen mid-frame (mobile stutter report).
+    pregen: function(w, cx, cz) { chunkOf(w, cx, cz); },
     LOAD_RADIUS: LOAD_RADIUS,
   };
 })();

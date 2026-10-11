@@ -22,7 +22,7 @@ import './voxel.js';
 (function() {
   // Keep in sync with manifest.json — test/ut_version pins it. Logged in
   // the status line so field reports name the exact build they ran.
-  var VERSION = '0.2.21';
+  var VERSION = '0.2.22';
   Facraft.version = VERSION;
 
   var B = Facraft.blocks, W = Facraft.world, P = Facraft.physics,
@@ -41,6 +41,7 @@ import './voxel.js';
     craftOpen: false,
     debug: false,
     notice: '',
+    noticeTtl: 0,
     hint: true, // drag-to-look hint until pointer lock engages (E6 fallback)
     pointerLocked: false,
     fps: 0,
@@ -87,8 +88,13 @@ import './voxel.js';
     return R.pick(state.world, e.x, e.y, e.z, d.x, d.y, d.z, REACH);
   }
 
+  // Notices are TOASTS: they auto-clear after NOTICE_MS on the frame
+  // clock. Before the TTL they stacked forever — the last one ('Chicken!
+  // +2 HP') pinned itself under the crosshair until something replaced it.
+  var NOTICE_MS = 4000;
   function setNotice(msg) {
     state.notice = msg || '';
+    state.noticeTtl = msg ? NOTICE_MS : 0;
     exportNow();
   }
 
@@ -391,6 +397,10 @@ import './voxel.js';
 
       var w = state.world;
       w.dayTime = D.advance(w.dayTime, dt);
+      if (state.noticeTtl > 0) {
+        state.noticeTtl -= dt * 1000;
+        if (state.noticeTtl <= 0) { state.notice = ''; state.noticeTtl = 0; }
+      }
 
       var input = collectInput(tMs);
       var res = P.step(w.player, input, w, dt, w.mode);

@@ -665,3 +665,30 @@ test('physics: entity collision box follows halfW/height (mobs fit walls)', asyn
     { forward: true }, w, 0.1, 'survival');
   assert.ok(pig.x <= 0.51, 'fat pig blocked by the wall, x=' + pig.x);
 });
+
+test('hud: notices are toasts — they auto-clear after NOTICE_MS', async () => {
+  const { jsr, sandbox } = await bootGame();
+  await jsr.pumpFrames(2, 16.6);
+  sandbox.Facraft.state.world.player.pitch = Math.PI / 2 - 0.01; // sky: no target
+  jsr.fire('break'); // → 'Nothing in reach.'
+  assert.ok((jsr.exported().notice || '').length > 0, 'notice shown');
+  await jsr.pumpFrames(45, 100); // ~4.5 s of frame clock
+  assert.strictEqual(jsr.exported().notice || '', '',
+    'notice expired instead of pinning itself under the crosshair');
+});
+
+test('perf: idle frames pre-generate the ring+1 margin data (no frontier bursts)', async () => {
+  const { jsr, sandbox } = await bootGame();
+  const F = sandbox.Facraft;
+  await jsr.pumpFrames(40, 16.6); // standing still: warm-up runs 2 chunks/frame
+  const w = F.state.world;
+  const pcx = Math.floor(w.player.x / 16), pcz = Math.floor(w.player.z / 16);
+  const missing = [];
+  for (let dx = -3; dx <= 3; dx++) {
+    for (let dz = -3; dz <= 3; dz++) {
+      if (!w.chunks[(pcx + dx) + ',' + (pcz + dz)]) missing.push(dx + ',' + dz);
+    }
+  }
+  assert.deepStrictEqual(missing, [],
+    'ring+1 margin fully warm after idle frames — arriving there costs no worldgen');
+});
