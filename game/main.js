@@ -22,7 +22,7 @@ import './voxel.js';
 (function() {
   // Keep in sync with manifest.json — test/ut_version pins it. Logged in
   // the status line so field reports name the exact build they ran.
-  var VERSION = '0.2.19';
+  var VERSION = '0.2.20';
   Facraft.version = VERSION;
 
   var B = Facraft.blocks, W = Facraft.world, P = Facraft.physics,
@@ -51,6 +51,8 @@ import './voxel.js';
   var bootReady = false;
   var lastHudSig = '';
   var lastCamKey = '';
+  var bootT0 = Date.now();      // boot timeline anchor for the boot logs
+  var bootStreamLogged = false; // first complete spawn ring logs once
 
   // Lightweight profiler: windowed frame-cost counters, exported via
   // exportState and dumped to the console every 300 frames. This is how a
@@ -128,6 +130,30 @@ import './voxel.js';
       state.debug + '|' + state.hint + '|' + Math.floor(w.dayTime) + '|' +
       (t && t.hit ? t.x + ',' + t.y + ',' + t.z : '-') + '|' +
       JSON.stringify(w.inventory) + '|' + th.isDark + '|' + th.bg + '|' + th.accent;
+  }
+
+  // Boot splash: rendered synchronously at eval so the host never shows a
+  // blank panel while storage + world gen run (the multi-second mobile
+  // "freeze" was exactly this window — nothing rendered until start()).
+  // Replaced by the HUD in start(); progress beyond that is the terrain
+  // streaming visibly into the voxel viewport (voxel.sync is frame-capped).
+  function splashTree() {
+    var t = jsr.theme;
+    return {
+      type: 'container', decoration: { color: t.bg },
+      child: {
+        type: 'center',
+        child: {
+          type: 'column', mainAxisSize: 'min', children: [
+            { type: 'center', child: { type: 'text', data: '⛏ Fa Craft',
+              style: { fontSize: 24, fontWeight: 'bold', color: t.text } } },
+            { type: 'container', height: 12 },
+            { type: 'center', child: { type: 'text', data: 'Loading world…',
+              style: { fontSize: 13, color: t.muted } } },
+          ],
+        },
+      },
+    };
   }
 
   function render() {
@@ -341,7 +367,12 @@ import './voxel.js';
       // Native voxel path (I4): dirty/new chunks + aim highlight + camera.
       // Runs after render() so the highlight tracks the fresh raycast target.
       var m0 = Date.now();
-      Facraft.voxel.sync(w, w.player, prof);
+      var sres = Facraft.voxel.sync(w, w.player, prof);
+      if (!bootStreamLogged && sres.pending === 0 && Facraft.voxel.isNative()) {
+        bootStreamLogged = true;
+        console.log('[facraft] boot: spawn ring streamed at +' +
+          (Date.now() - bootT0) + 'ms');
+      }
       Facraft.voxel.highlight(w, state.target);
       // Camera pushes wake a full scene repaint — push only when the eye
       // state actually moved (quantized to ~1/64 block / ~1/256 rad), so
@@ -429,6 +460,7 @@ import './voxel.js';
   }
 
   function hydrate(raw) {
+    var tStorage = Date.now();
     var data = null;
     if (raw !== null && raw !== undefined) {
       try { data = validPayload(raw); } catch (e) { data = null; }
@@ -448,6 +480,14 @@ import './voxel.js';
     } else {
       newWorld(false);
     }
+    worldReady(tStorage);
+  }
+
+  // Both boot paths funnel here: one timing line per boot so field reports
+  // attribute the split (storage wait vs world build vs terrain stream).
+  function worldReady(tStorage) {
+    console.log('[facraft] boot: storage=' + (tStorage - bootT0) +
+      'ms world=' + (Date.now() - tStorage) + 'ms');
     start();
   }
 
@@ -470,7 +510,14 @@ import './voxel.js';
   jsr.onEvent(handleEvent); // registered before first render
   jsr.onKey(handleKey);
   jsr.setTitle('⛏ Fa Craft');
+  // The splash goes out FIRST — a synchronous render at eval, before any
+  // async storage/world work, so the panel is never blank.
+  jsr.render(splashTree());
   Facraft.voxel.probe(); // I4: async capability probe — native path flips on
   setInterval(save, SAVE_MS);
-  jsr.storage.get(KEY).then(hydrate, function() { newWorld(true); start(); });
+  jsr.storage.get(KEY).then(hydrate, function() {
+    var t = Date.now();
+    newWorld(true);
+    worldReady(t);
+  });
 })();

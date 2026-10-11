@@ -121,6 +121,7 @@ Facraft.world = (function() {
   }
 
   function create(seed) {
+    var spawnY = W().groundY(seed, 0, 0) + 1.01; // one scan, shared by spawn + player
     var w = {
       seed: seed,
       chunks: {},
@@ -133,9 +134,9 @@ Facraft.world = (function() {
       dead: false,
       deaths: 0,
       dayTime: 0,
-      spawn: { x: 0.5, y: W().groundY(seed, 0, 0) + 1.01, z: 0.5 },
+      spawn: { x: 0.5, y: spawnY, z: 0.5 },
       player: {
-        x: 0.5, y: W().groundY(seed, 0, 0) + 1.01, z: 0.5,
+        x: 0.5, y: spawnY, z: 0.5,
         vx: 0, vy: 0, vz: 0, yaw: 0, pitch: 0,
         onGround: true, flying: false,
       },
