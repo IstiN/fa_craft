@@ -103,7 +103,16 @@ test('voxel adapter (native): voxel node, one mesh upload per chunk, camera per 
     'world edit re-uploads only dirty chunks, got ' + reuploaded.length);
   assert.ok(reuploaded.some((m) => m.key === '0,0'), 'the edited chunk re-uploaded');
   await jsr.pumpFrames(10, 16.6);
-  assert.strictEqual(meshes.length, up0 + reuploaded.length, 'no rebuild while clean after the edit');
+  // Resident '__'-prefixed chunks (aim marker, fx, mobs) legitimately
+  // follow runtime state — on a loaded runner their upload can slip a
+  // frame past the edit, so the clean-window invariant counts TERRAIN
+  // chunks only (the same filter the edit-frame count above applies).
+  const lateTerrain = meshes.slice(up0)
+    .filter((m) => !String(m.key).startsWith('__'));
+  const strays = lateTerrain.filter((m) => !reuploaded.includes(m));
+  assert.strictEqual(strays.length, 0,
+    'no terrain rebuild while clean after the edit, got: ' +
+    strays.map((m) => m.key).join(', '));
 });
 
 test('voxel adapter (native): aimed block uploads a resident __hl highlight chunk', async () => {
@@ -197,46 +206,33 @@ test('input: joystick stick offset comes from pan POSITION, not per-event deltas
   assert.ok(Math.hypot(dx, dz) > 0.5, 'full-deflection stick actually walks: ' + Math.hypot(dx, dz));
 });
 
-test('voxel adapter (legacy fallback): scene3d viewport, meshes cached while clean', async () => {
-  const { jsr, sandbox } = await bootGame({ voxelNative: false });
-  const F = sandbox.Facraft;
+test('voxel adapter: failed probe renders the update card — no scene3d fallback', async () => {
+  const { jsr } = await bootGame({ voxelNative: false });
   await jsr.pumpFrames(5, 16.6);
-  const scene = findNode(jsr.lastTree, (n) => n.type === 'scene3d');
-  assert.ok(scene, 'scene3d viewport node in the render tree');
-  assert.ok(scene.meshes.length > 0, 'world geometry present');
-  assert.ok(scene.meshes.every((m) => m.vertices.length && m.faces.length), 'no empty meshes');
-  assert.ok(/^#[0-9a-f]{6}$/.test(scene.background), 'sky-colored background');
-  assert.strictEqual(scene.camera.position.length, 3, 'camera at the player eye');
-  const meshes0 = scene.meshes;
-  await jsr.pumpFrames(20, 16.6);
-  assert.strictEqual(findNode(jsr.lastTree, (n) => n.type === 'scene3d').meshes, meshes0,
-    'mesh payload reused by identity while the world is clean');
-  F.world.setBlock(F.state.world, 0, Math.floor(F.state.world.player.y) - 1, 1, F.blocks.BRICKS);
-  await jsr.pumpFrames(1, 16.6);
-  const meshes1 = findNode(jsr.lastTree, (n) => n.type === 'scene3d').meshes;
-  assert.notStrictEqual(meshes1, meshes0, 'world edit rebuilds the mesh payload');
-  const topY = Math.floor(F.state.world.player.y); // top face of the block underfoot
-  const hasPlaced = meshes1.some((m) => m.vertices.some((v) =>
-    v[0] === 0 && v[1] === topY && v[2] === 1));
-  assert.ok(hasPlaced, 'a top-face corner of the placed bricks block is in the payload');
-  await jsr.pumpFrames(10, 16.6);
-  assert.strictEqual(findNode(jsr.lastTree, (n) => n.type === 'scene3d').meshes, meshes1,
-    'no rebuild while clean after the edit');
+  assert.strictEqual(findNode(jsr.lastTree, (n) => n.type === 'scene3d'), null,
+    'the legacy scene3d meshes path is gone');
+  const card = findNode(jsr.lastTree, (n) => n.type === 'text' &&
+    typeof n.data === 'string' && n.data.includes('0.4.156'));
+  assert.ok(card, 'static update card in the render tree');
+  assert.strictEqual(jsr.callCount('hostCall:voxel.mesh'), 0,
+    'no chunk uploads cross the bridge on an unsupported host');
+  assert.strictEqual(jsr.callCount('hostCall:voxel.camera'), 0,
+    'no camera pushes on an unsupported host');
 });
 
-test('voxel adapter (legacy fallback): targeted block gets a whitened highlight mesh', async () => {
-  const { jsr, sandbox } = await bootGame({ voxelNative: false });
-  const F = sandbox.Facraft;
-  placeAndAim(F, F.state, 0, 60, -2, F.blocks.STONE);
+test('voxel adapter: hung probe surfaces the update card after the 2 s timeout', async () => {
+  const { jsr } = await bootGame({ voxelNative: 'hang' });
+  await jsr.pumpFrames(2, 16.6);
+  assert.strictEqual(findNode(jsr.lastTree, (n) => n.type === 'text' &&
+    typeof n.data === 'string' && n.data.includes('0.4.156')), null,
+    'no card while the probe is still in flight');
+  jsr.fireTimeouts(); // the probe's 2 s fail-safe lands
   await jsr.pumpFrames(1, 16.6);
-  const scene = findNode(jsr.lastTree, (n) => n.type === 'scene3d');
-  assert.ok(scene, 'scene rendered');
-  // The highlight shell is the one mesh whose color is lightened STONE.
-  const base = scene.meshes.filter((m) => m.vertices.length > 8);
-  const shells = scene.meshes.filter((m) => m.vertices.length === 8 && m.faces.length === 12);
-  assert.strictEqual(shells.length, 1, 'exactly one highlight shell (8 corners, 12 tris)');
-  assert.notStrictEqual(shells[0].color, '#8c8c91', 'shell is a whitened block color, not raw stone');
-  assert.ok(base.length >= 1, 'world geometry still present');
+  assert.ok(findNode(jsr.lastTree, (n) => n.type === 'text' &&
+    typeof n.data === 'string' && n.data.includes('0.4.156')),
+    'a probe that never settles still ends on the update card');
+  assert.strictEqual(findNode(jsr.lastTree, (n) => n.type === 'scene3d'), null,
+    'still no scene3d fallback');
 });
 
 test('break: breaks the targeted block into inventory', async () => {

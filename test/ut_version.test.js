@@ -6,7 +6,11 @@ const { gameSourceText, manifest } = require('./harness.js');
 
 test('version: game/main.js VERSION matches manifest.json', () => {
   const src = gameSourceText();
-  const m = src.match(/var VERSION = '([^']+)'/);
+  // Matches both source forms — plain `var VERSION = 'x'` and the nyc-
+  // instrumented `var VERSION=(cov_x().s[N]++,'x')` that `npm run cover`
+  // feeds back through the harness (.nyc-src) — without loosening the
+  // contract: the VERSION const must exist and equal the manifest version.
+  const m = src.match(/var VERSION(?: = |=\(cov_[^,]+,)'([^']+)'/);
   assert.ok(m, 'VERSION const present in main.js');
   assert.strictEqual(m[1], manifest().version,
     'main.js VERSION must equal manifest.json version');

@@ -22,7 +22,7 @@ import './voxel.js';
 (function() {
   // Keep in sync with manifest.json — test/ut_version pins it. Logged in
   // the status line so field reports name the exact build they ran.
-  var VERSION = '0.2.18';
+  var VERSION = '0.2.19';
   Facraft.version = VERSION;
 
   var B = Facraft.blocks, W = Facraft.world, P = Facraft.physics,
@@ -119,8 +119,8 @@ import './voxel.js';
   // Signature of everything the HUD tree can express. Native mode renders
   // a CONSTANT viewport node ({type:'voxel'}) — when nothing HUD-visible
   // changed, re-sending the tree is pure bridge cost, so render() skips.
-  // (Legacy scene3d mode is excluded: its camera lives INSIDE the tree and
-  // must follow the eye every frame.)
+  // (Off-native — probe in flight or failed — the tree must follow the
+  // probe, so every frame re-renders.)
   function hudSig() {
     var w = state.world, t = state.target, th = jsr.theme;
     return Math.round(state.fps) + '|' + w.health + '|' + w.dead + '|' +
