@@ -7,6 +7,8 @@
 var Facraft = Facraft || {};
 Facraft.voxel = (function() {
   var M = function() { return Facraft.mesh; };
+  var WG = function() { return Facraft.worldgen; };
+  var B = function() { return Facraft.blocks; };
 
   var VIEW_RADIUS = 2;  // chunk radius meshed/uploaded
   var FOV = 72;
@@ -16,16 +18,27 @@ Facraft.voxel = (function() {
   // buffers cross the bridge ONCE per chunk (and per edit) via voxel.mesh
   // and the per-frame traffic shrinks to one tiny voxel.camera call. A
   // failed probe renders the update card — no scene3d meshes path exists.
+  // 0.4.163+ additionally advertises `blocks: true` on the probe: the
+  // chunk then crosses as raw base64 block bytes (~22 KB) and the greedy
+  // mesher runs in Dart AOT instead of interpreted JS — the fix for the
+  // world-streaming hitches on JIT-less engines (iOS JSC). Without the
+  // flag (or pre-0.4.156 entirely) the JS-meshed voxel.mesh path stays.
   var NATIVE_ID = 'fa-craft';
   var nativeOn = null; // null = probe in flight; true/false once it lands
+  var blocksCap = false; // probe said the runtime greedy-meshes in Dart
+  var paletteSent = false; // palette crosses once per session, then cached
   var uploaded = {};   // chunk key -> true (re-upload driven by w.dirty)
   var hlCell = '';     // last uploaded highlight cell key
 
   function isNative() { return nativeOn === true; }
+  function isBlocks() { return nativeOn === true && blocksCap; }
 
   function probe() {
     jsr.hostCall('voxel.attach', { id: NATIVE_ID }).then(
-      function() { nativeOn = true; },
+      function(res) {
+        nativeOn = true;
+        blocksCap = !!(res && res.blocks === true);
+      },
       function() { nativeOn = false; }
     );
     // A probe that never settles (pre-0.4.156 JSC: __jsr_host_call not
@@ -66,22 +79,71 @@ Facraft.voxel = (function() {
     }
   }
 
+  // Base64 (standard alphabet, padded) over a Uint8Array — ES5, no btoa
+  // dependency: the JS engines this widget runs on (QuickJS, iOS JSC)
+  // do not ship one. 16 KB chunk → ~22 KB string, ~5.5k loop turns.
+  var B64A = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ' + // 0-25
+    'abcdefghijklmnopqrstuvwxyz' + // 26-51
+    '0123456789+/'; // 52-63
+  function b64(u8) {
+    var out = [];
+    var n = u8.length, i, h;
+    for (i = 0; i + 2 < n; i += 3) {
+      h = (u8[i] << 16) | (u8[i + 1] << 8) | u8[i + 2];
+      out.push(B64A[(h >> 18) & 63], B64A[(h >> 12) & 63],
+               B64A[(h >> 6) & 63], B64A[h & 63]);
+    }
+    var rem = n - i;
+    if (rem === 1) {
+      h = u8[i] << 16;
+      out.push(B64A[(h >> 18) & 63], B64A[(h >> 12) & 63], '=', '=');
+    } else if (rem === 2) {
+      h = (u8[i] << 16) | (u8[i + 1] << 8);
+      out.push(B64A[(h >> 18) & 63], B64A[(h >> 12) & 63],
+               B64A[(h >> 6) & 63], '=');
+    }
+    return out.join('');
+  }
+
   function uploadChunk(w, cx, cz, prof) {
-    var m = M().buildChunk(w, cx, cz);
-    shadeFaces(m, cx, cz);
-    push('voxel.mesh', {
-      id: NATIVE_ID, key: cx + ',' + cz,
-      origin: m.origin, positions: m.positions,
-      colors: m.colors, indices: m.indices,
-    });
-    uploaded[cx + ',' + cz] = true;
+    var k = cx + ',' + cz;
+    if (isBlocks()) {
+      // Native-fast path: raw chunk bytes only. The runtime greedy-meshes
+      // in Dart AOT and keeps the bytes resident so later chunks cull
+      // their interior faces against this one (and re-mesh this one when
+      // an edit changes its border). Palette crosses once, then lives in
+      // the runtime's per-instance cache.
+      var c = w.chunks[k];
+      if (!c) { c = WG().chunk(w.seed, cx, cz); w.chunks[k] = c; }
+      var args = {
+        id: NATIVE_ID, key: k,
+        origin: [cx * 16, 0, cz * 16],
+        size: [16, WG().CHUNK_Y, 16],
+        blocks: b64(c),
+      };
+      if (!paletteSent) { args.palette = B().paletteSpec(); paletteSent = true; }
+      push('voxel.blocks', args);
+      if (prof) {
+        prof.uploads++;
+        prof.meshBytes += ((c.length * 4 + 2) / 3) | 0;
+      }
+    } else {
+      var m = M().buildChunk(w, cx, cz);
+      shadeFaces(m, cx, cz);
+      push('voxel.mesh', {
+        id: NATIVE_ID, key: k,
+        origin: m.origin, positions: m.positions,
+        colors: m.colors, indices: m.indices,
+      });
+      if (prof) {
+        prof.uploads++;
+        prof.meshBytes += (m.positions.length + m.colors.length + m.indices.length) * 4;
+      }
+    }
+    uploaded[k] = true;
     // ensureArea re-marks every chunk missing from w.meshes each frame —
     // a sentinel entry stops the loop (only this uploader fills w.meshes).
-    w.meshes.set(cx + ',' + cz, true);
-    if (prof) {
-      prof.uploads++;
-      prof.meshBytes += (m.positions.length + m.colors.length + m.indices.length) * 4;
-    }
+    w.meshes.set(k, true);
   }
 
   // Upload the chunks of the view ring that are new or dirty, at most
@@ -98,6 +160,32 @@ Facraft.voxel = (function() {
   var UPLOADS_PER_FRAME = 3;
   var GENS_PER_FRAME = 2;  // data-only worldgen warm-up budget per frame
 
+  // Adaptive stream budget: the tick loop keeps an EWMA of the per-frame
+  // cost and clamps the upload budget so a hitching frame sheds work
+  // instead of compounding it. On JIT-less engines a streamed chunk can
+  // cost 10-30 ms of interpreted worldgen — 3 per frame stalls the walk;
+  // 1 per frame just pops the far ring in a moment later (invisible at
+  // streaming distance). budgetFor() is pure — unit-tested thresholds.
+  var streamBudget = UPLOADS_PER_FRAME;
+  var budgetPinned = false;
+  function budgetFor(tickMs) {
+    if (typeof tickMs !== 'number' || !isFinite(tickMs) || tickMs <= 0) {
+      return UPLOADS_PER_FRAME;
+    }
+    if (tickMs > 33) return 1;
+    if (tickMs > 22) return 2;
+    return UPLOADS_PER_FRAME;
+  }
+  function setBudget(n) {
+    if (typeof n !== 'number' || !isFinite(n)) return;
+    streamBudget = Math.max(1, Math.min(UPLOADS_PER_FRAME, Math.round(n)));
+  }
+  // Deterministic override for tests and field diagnosis: pins the budget
+  // so the per-tick adaptive update leaves it alone until reset().
+  function pinBudget(n) { budgetPinned = true; setBudget(n); }
+  function isBudgetPinned() { return budgetPinned; }
+  function currentBudget() { return streamBudget; }
+
   function sync(w, player, prof) {
     if (!isNative()) return { uploaded: 0, pending: 0 };
     var pcx = Math.floor(player.x / 16), pcz = Math.floor(player.z / 16);
@@ -110,7 +198,7 @@ Facraft.voxel = (function() {
       }
     }
     todo.sort(function(a, b) { return a.d2 - b.d2; });
-    var n = Math.min(UPLOADS_PER_FRAME, todo.length);
+    var n = Math.min(streamBudget, todo.length);
     for (var i = 0; i < n; i++) {
       uploadChunk(w, todo[i].cx, todo[i].cz, prof);
       w.dirty.delete(todo[i].key);
@@ -132,7 +220,7 @@ Facraft.voxel = (function() {
       }
     }
     cold.sort(function(a, b) { return (a.ahead - b.ahead) || (a.d2 - b.d2); });
-    var warm = Math.min(GENS_PER_FRAME, cold.length);
+    var warm = Math.min(Math.max(0, streamBudget - 1), cold.length);
     for (var g = 0; g < warm; g++) {
       Facraft.world.pregen(w, cold[g].cx, cold[g].cz);
     }
@@ -268,12 +356,17 @@ Facraft.voxel = (function() {
 
   function reset() {
     uploaded = {}; hlCell = '';
+    paletteSent = false;
+    budgetPinned = false;
   }
 
   return {
     view: view, reset: reset,
-    probe: probe, isNative: isNative,
+    probe: probe, isNative: isNative, isBlocks: isBlocks,
     sync: sync, camera: camera, highlight: highlight,
+    budgetFor: budgetFor, setBudget: setBudget, currentBudget: currentBudget,
+    pinBudget: pinBudget, isBudgetPinned: isBudgetPinned,
+    b64: b64,
     // Resident-chunk primitives for dynamic actors (mobs): uploadMesh
     // replaces a chunk wholesale, removeMesh evicts it (despawn).
     uploadMesh: function(key, flat) {

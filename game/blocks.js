@@ -67,5 +67,37 @@ Facraft.blocks = (function() {
       return TONES[id] || TONES[STONE];
     },
     name: function(id) { return NAMES[id] || '?'; },
+    // The voxel.blocks palette spec (js_widget_runtime >= 0.4.163):
+    // entry k colors block type k; 0 is the air placeholder. Four
+    // deterministic tones per type — the runtime's greedy mesher picks
+    // one per face from its own world-position hash, so the pixel-grain
+    // texture survives the move from the JS mesher (whose hash lived in
+    // mesh.js) to the Dart one; only the exact grain pattern differs.
+    // Grass: green top tones, dirt-green side tones (Minecraft grass
+    // block); every other type uses one palette on all faces.
+    paletteSpec: function() {
+      function hex1(c) {
+        function h(v) {
+          var s = Math.round(v * 255).toString(16);
+          return s.length < 2 ? '0' + s : s;
+        }
+        return '#' + h(c[0]) + h(c[1]) + h(c[2]);
+      }
+      function tones4(t) {
+        var out = [];
+        for (var i = 0; i < 4; i++) out.push(hex1(t[i]));
+        return out;
+      }
+      var out = [['#000000', '#000000', '#000000', '#000000']];
+      for (var i = 1; i <= BEDROCK; i++) {
+        var t = TONES[i] || TONES[STONE];
+        if (i === GRASS) {
+          out.push({ top: tones4(t), side: tones4(GRASS_SIDE) });
+        } else {
+          out.push(tones4(t));
+        }
+      }
+      return out;
+    },
   };
 })();

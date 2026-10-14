@@ -101,13 +101,14 @@ function fakeJsr() {
         if (jsr.voxelNative === 'hang') return new Promise(() => {});
         return jsr.voxelNative === false
           ? Promise.reject(new Error('no voxel support'))
-          : Promise.resolve({ ok: true });
+          : Promise.resolve({ ok: true, blocks: jsr.voxelBlocks !== false });
       }
       if (!jsr.hostHandlers[name]) return Promise.reject(new Error('no handler for ' + name));
       return Promise.resolve(jsr.hostHandlers[name](args));
     },
     hostHandlers: {},
     voxelNative: true,
+    voxelBlocks: true,
     requestAnimationFrame(fn) { rafQ.push(fn); return rafQ.length; },
     setTimeout(fn, ms) { timeouts.push(fn); return timeouts.length; },
     clearTimeout() {},
@@ -151,6 +152,7 @@ async function bootGame(opts) {
   if (opts && opts.hostHandlers) Object.assign(jsr.hostHandlers, opts.hostHandlers);
   if (opts && opts.storage) Object.assign(jsr.storage, opts.storage);
   if (opts && 'voxelNative' in opts) jsr.voxelNative = opts.voxelNative;
+  if (opts && 'voxelBlocks' in opts) jsr.voxelBlocks = opts.voxelBlocks;
   const seen = new Set();
   const out = [];
   bundle('game/main.js', 1, seen, out);

@@ -22,7 +22,7 @@ import './voxel.js';
 (function() {
   // Keep in sync with manifest.json — test/ut_version pins it. Logged in
   // the status line so field reports name the exact build they ran.
-  var VERSION = '0.2.22';
+  var VERSION = '0.2.23';
   Facraft.version = VERSION;
 
   var B = Facraft.blocks, W = Facraft.world, P = Facraft.physics,
@@ -58,6 +58,7 @@ import './voxel.js';
   var lastCamKey = '';
   var bootT0 = Date.now();      // boot timeline anchor for the boot logs
   var bootStreamLogged = false; // first complete spawn ring logs once
+  var tickCostMs = 0; // EWMA of the tick body — drives the stream budget
 
   // Lightweight profiler: windowed frame-cost counters, exported via
   // exportState and dumped to the console every 300 frames. This is how a
@@ -396,6 +397,7 @@ import './voxel.js';
       if (dt > 0) state.fps = state.fps ? state.fps * 0.9 + (1 / dt) * 0.1 : 1 / dt;
 
       var w = state.world;
+      var tickStart = Date.now(); // adaptive stream budget measures this
       w.dayTime = D.advance(w.dayTime, dt);
       if (state.noticeTtl > 0) {
         state.noticeTtl -= dt * 1000;
@@ -418,7 +420,6 @@ import './voxel.js';
 
       var pcx = Math.floor(w.player.x / 16), pcz = Math.floor(w.player.z / 16);
       W.ensureArea(w, pcx, pcz, W.LOAD_RADIUS);
-
       var h0 = Date.now();
       render();
       prof.hudMs += Date.now() - h0;
@@ -460,6 +461,15 @@ import './voxel.js';
       // map) and CLI snapshots must stay live — the bridge cost that killed
       // the old path was the megabyte mesh JSON, not small calls.
       exportNow();
+
+      // Adaptive stream budget: EWMA of the whole tick body (worldgen,
+      // physics, HUD tree, sync) clamps the per-frame upload budget so a
+      // slow frame sheds streaming work instead of compounding the hitch.
+      var tickCost = Date.now() - tickStart;
+      tickCostMs = tickCostMs ? tickCostMs * 0.9 + tickCost * 0.1 : tickCost;
+      if (!Facraft.voxel.isBudgetPinned()) {
+        Facraft.voxel.setBudget(Facraft.voxel.budgetFor(tickCostMs));
+      }
 
       prof.frames++;
       if (prof.frames % 300 === 0) {
