@@ -101,12 +101,27 @@ function fakeJsr() {
         if (jsr.voxelNative === 'hang') return new Promise(() => {});
         return jsr.voxelNative === false
           ? Promise.reject(new Error('no voxel support'))
-          : Promise.resolve({ ok: true, blocks: jsr.voxelBlocks !== false });
+          : Promise.resolve({
+              ok: true,
+              blocks: jsr.voxelBlocks !== false,
+              // mirrors the runtime: only a native-bytes engine advertises
+              // the packed binary lane (bootGame({ voxelBinary: true }))
+              bin: jsr.voxelBinary === true,
+            });
       }
       if (!jsr.hostHandlers[name]) return Promise.reject(new Error('no handler for ' + name));
       return Promise.resolve(jsr.hostHandlers[name](args));
     },
+    // Binary lane receiver (fire-and-forget in the real runtime).
+    hostCallBinary(name, data) {
+      calls.push(['hostCallBinary:' + name, data ? data.byteLength : -1]);
+      jsr.lastBinary[name] = data;
+      (jsr.allBinary[name] = jsr.allBinary[name] || []).push(data);
+    },
+    lastBinary: {},
+    allBinary: {},
     hostHandlers: {},
+    voxelBinary: false,
     voxelNative: true,
     voxelBlocks: true,
     requestAnimationFrame(fn) { rafQ.push(fn); return rafQ.length; },
@@ -153,6 +168,7 @@ async function bootGame(opts) {
   if (opts && opts.storage) Object.assign(jsr.storage, opts.storage);
   if (opts && 'voxelNative' in opts) jsr.voxelNative = opts.voxelNative;
   if (opts && 'voxelBlocks' in opts) jsr.voxelBlocks = opts.voxelBlocks;
+  if (opts && opts.voxelBinary) jsr.voxelBinary = true;
   const seen = new Set();
   const out = [];
   bundle('game/main.js', 1, seen, out);
@@ -169,6 +185,8 @@ async function bootGame(opts) {
     parseInt,
     parseFloat,
     Uint8Array,
+    ArrayBuffer,
+    DataView,
     // host-shimmed timers (globals in the widget sandbox, per the runtime)
     requestAnimationFrame: (fn) => jsr.requestAnimationFrame(fn),
     setTimeout: (fn, ms) => jsr.setTimeout(fn, ms),
@@ -202,6 +220,8 @@ async function loadNamespace(rels, opts) {
     parseInt,
     parseFloat,
     Uint8Array,
+    ArrayBuffer,
+    DataView,
     __coverage__: global.__coverage__ || (global.__coverage__ = {}),
   };
   const ctx = vm.createContext(sandbox);
@@ -225,7 +245,19 @@ function manifest() {
   return JSON.parse(fs.readFileSync(path.join(ROOT, 'manifest.json'), 'utf8'));
 }
 
-module.exports = { bootGame, loadNamespace, gameSourceText, manifest, fakeJsr, fakeStorage };
+function decodeBinaryEnvelope(u8) {
+  const dv = new DataView(u8.buffer, u8.byteOffset, u8.byteLength);
+  if (dv.getUint32(0, true) !== 0x4A56584D) throw new Error('bad magic');
+  if (dv.getUint32(4, true) !== 1) throw new Error('bad version');
+  const headerLen = dv.getUint32(8, true);
+  const padded = headerLen + ((4 - (headerLen % 4)) % 4);
+  const header = JSON.parse(
+    Buffer.from(u8.slice(12, 12 + headerLen)).toString('utf8')
+  );
+  return { header, body: u8.slice(12 + padded) };
+}
+
+module.exports = { bootGame, loadNamespace, gameSourceText, manifest, fakeJsr, fakeStorage, decodeBinaryEnvelope };
 
 // Per-test-process coverage dump (merged later into coverage/coverage-final.json).
 process.on('exit', () => {

@@ -26,6 +26,7 @@ Facraft.voxel = (function() {
   var NATIVE_ID = 'fa-craft';
   var nativeOn = null; // null = probe in flight; true/false once it lands
   var blocksCap = false; // probe said the runtime greedy-meshes in Dart
+  var binCap = false;    // probe said the native bytes lane is wired
   var paletteSent = false; // palette crosses once per session, then cached
   var uploaded = {};   // chunk key -> true (re-upload driven by w.dirty)
   var hlCell = '';     // last uploaded highlight cell key
@@ -38,6 +39,12 @@ Facraft.voxel = (function() {
       function(res) {
         nativeOn = true;
         blocksCap = !!(res && res.blocks === true);
+        // 0.4.171+ advertises `bin: true` when the native bytes lane is
+        // wired: chunk bytes then cross as a typed array by
+        // (pointer, length) — no base64 encode on the JS side, no
+        // decode on the Dart side.
+        binCap = !!(res && res.bin === true) &&
+          typeof jsr.hostCallBinary === 'function';
       },
       function() { nativeOn = false; }
     );
@@ -105,6 +112,47 @@ Facraft.voxel = (function() {
     return out.join('');
   }
 
+  // ES5 utf-8: the packed header JSON is pure ASCII in practice, but the
+  // encoder stays correct for any id/key a host hands us.
+  function utf8Bytes(s) {
+    var out = [];
+    for (var i = 0; i < s.length; i++) {
+      var c = s.charCodeAt(i);
+      if (c < 0x80) out.push(c);
+      else if (c < 0x800) out.push(0xC0 | (c >> 6), 0x80 | (c & 63));
+      else {
+        out.push(0xE0 | (c >> 12), 0x80 | ((c >> 6) & 63), 0x80 | (c & 63));
+      }
+    }
+    return out;
+  }
+
+  // Packs one chunk for the zero-JSON lane. Layout (little-endian, see
+  // JsVoxelChunk.parseBinaryEnvelope in the runtime): u32 magic 'JVXM',
+  // u32 version = 1, u32 header length, the header JSON bytes padded
+  // with NULs to a 4-byte boundary, then the RAW block bytes (no
+  // base64). Fire-and-forget through jsr.hostCallBinary: engines with
+  // the native bytes lane move (pointer, length) only.
+  function packBlocks(key, cx, cz, bytes, palette) {
+    var head = utf8Bytes(JSON.stringify({
+      id: NATIVE_ID,
+      key: key,
+      origin: [cx * 16, 0, cz * 16],
+      size: [16, WG().CHUNK_Y, 16],
+      palette: palette || undefined,
+    }));
+    var pad = (4 - (head.length % 4)) % 4;
+    var total = 12 + head.length + pad + bytes.length;
+    var buf = new ArrayBuffer(total);
+    var dv = new DataView(buf);
+    dv.setUint32(0, 0x4A56584D, true);
+    dv.setUint32(4, 1, true);
+    dv.setUint32(8, head.length, true);
+    new Uint8Array(buf, 12, head.length).set(head);
+    new Uint8Array(buf, 12 + head.length + pad, bytes.length).set(bytes);
+    return new Uint8Array(buf);
+  }
+
   function uploadChunk(w, cx, cz, prof) {
     var k = cx + ',' + cz;
     if (isBlocks()) {
@@ -115,17 +163,27 @@ Facraft.voxel = (function() {
       // the runtime's per-instance cache.
       var c = w.chunks[k];
       if (!c) { c = WG().chunk(w.seed, cx, cz); w.chunks[k] = c; }
-      var args = {
-        id: NATIVE_ID, key: k,
-        origin: [cx * 16, 0, cz * 16],
-        size: [16, WG().CHUNK_Y, 16],
-        blocks: b64(c),
-      };
-      if (!paletteSent) { args.palette = B().paletteSpec(); paletteSent = true; }
-      push('voxel.blocks', args);
+      if (binCap) {
+        // 0.4.171+ packed lane: the bytes cross as a typed array by
+        // (pointer, length) — same 'JVXM' envelope as voxel.mesh.bin
+        // (magic, version, JSON header, NUL-padded to 4 bytes), but the
+        // body is the RAW block bytes. No b64 expansion, no encode.
+        jsr.hostCallBinary('voxel.blocks.bin',
+          packBlocks(k, cx, cz, c, !paletteSent ? B().paletteSpec() : null));
+        paletteSent = true;
+      } else {
+        var args = {
+          id: NATIVE_ID, key: k,
+          origin: [cx * 16, 0, cz * 16],
+          size: [16, WG().CHUNK_Y, 16],
+          blocks: b64(c),
+        };
+        if (!paletteSent) { args.palette = B().paletteSpec(); paletteSent = true; }
+        push('voxel.blocks', args);
+      }
       if (prof) {
         prof.uploads++;
-        prof.meshBytes += ((c.length * 4 + 2) / 3) | 0;
+        prof.meshBytes += binCap ? c.length : ((c.length * 4 + 2) / 3) | 0;
       }
     } else {
       var m = M().buildChunk(w, cx, cz);

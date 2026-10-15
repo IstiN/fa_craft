@@ -1,7 +1,7 @@
 'use strict';
 const test = require('node:test');
 const assert = require('node:assert');
-const { bootGame } = require('./harness.js');
+const { bootGame, decodeBinaryEnvelope } = require('./harness.js');
 
 // Deterministic aim helper: point the camera straight at a placed block.
 // Setup pokes the real state object (white box); the ACTIONS under test go
@@ -725,4 +725,37 @@ test('perf: idle frames pre-generate the ring+1 margin data (no frontier bursts)
   }
   assert.deepStrictEqual(missing, [],
     'ring+1 margin fully warm after idle frames — arriving there costs no worldgen');
+});
+
+test('voxel adapter (native+blocks+bin): chunk bytes cross the binary lane', async () => {
+  const jsonBlocks = [];
+  const { jsr, sandbox } = await bootGame({
+    voxelBinary: true,
+    hostHandlers: {
+      'voxel.blocks': (a) => { jsonBlocks.push(String(a.key)); return true; },
+    },
+  });
+  const F = sandbox.Facraft;
+  // 0.2.21+ streams the boot ring frame-capped (nearest first) — pump
+  // until the 5x5 ring has fully streamed.
+  await jsr.pumpFrames(40, 16.6);
+  const binCount = jsr.callCount('hostCallBinary:voxel.blocks.bin');
+  assert.ok(binCount >= 25, '5x5 view ring uploaded raw bytes, got ' + binCount);
+  assert.strictEqual(jsonBlocks.length, 0,
+    'terrain stays off the base64 JSON lane on the bin path');
+  const first = decodeBinaryEnvelope(jsr.allBinary['voxel.blocks.bin'][0]);
+  assert.ok('palette' in first.header,
+    'the first packed upload carries the palette (runtime caches it)');
+  assert.strictEqual(first.header.id, 'fa-craft');
+  assert.match(first.header.key, /^-?\d+,-?\d+$/);
+  assert.deepStrictEqual(first.header.size, [16, 64, 16]);
+  assert.strictEqual(first.body.length, 16 * 64 * 16,
+    'body is the RAW block bytes, no base64');
+  // An edit re-uploads only the dirty chunk(s) — still raw bytes.
+  F.state.world.mobsPaused = true;
+  const before = jsr.callCount('hostCallBinary:voxel.blocks.bin');
+  F.world.setBlock(F.state.world, 0, Math.floor(F.state.world.player.y) - 1, 1, F.blocks.BRICKS);
+  await jsr.pumpFrames(2, 16.6);
+  assert.ok(jsr.callCount('hostCallBinary:voxel.blocks.bin') > before,
+    'a dirty edit re-uploads through the binary lane');
 });

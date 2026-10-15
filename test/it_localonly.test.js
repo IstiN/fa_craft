@@ -24,7 +24,8 @@ test('I2: byte-scan of outbound bridge surface — only the allow-list', () => {
     'render', 'onEvent', 'setTitle', 'exportState', 'showError', 'onKey',
     'storage', 'theme', 'instanceId', 'viewport', 'onViewport', 'hostCall',
     'requestAnimationFrame', 'setTimeout', 'clearTimeout', 'setInterval', 'clearInterval',
-  ]);
+    'hostCallBinary', // fire-and-forget binary lane (packed voxel.blocks.bin) — still local-only
+]);
   const tokens = src.match(/jsr\.([A-Za-z_$][\w$]*)/g) || [];
   assert.ok(tokens.length > 5, 'widget actually uses the bridge'); // render/export/theme/storage/events/title
   const used = new Set(tokens.map((t) => t.slice(4)));
@@ -38,7 +39,7 @@ test('I2: game bridge traffic uses only generic voxel.* hostCalls (I1)', () => {
   // I4: the voxel node port moved chunk/camera transport to bridge-owned
   // voxel.* hostCalls. The I1 invariant stands — every hostCall name must
   // be a generic voxel capability, never a fa-craft-specific channel.
-  const names = (src.match(/hostCall\(\s*'([^']+)'/g) || [])
+  const names = (src.match(/hostCallBinary?\(\s*'([^']+)'/g) || [])
     .map((m) => m.match(/'([^']+)'/)[1]);
   assert.ok(names.length > 0, 'the native voxel path actually uses hostCall');
   for (const n of names) {

@@ -29,4 +29,12 @@ Determinism: the capture pins `Date.now` (world seed `1210892288`), world states
 
 Known rendering notes: text renders in the test runner's fallback font, and the pipeline appends a small adapter to the *generated* bundle (`tools/goldens.js` → `RENDER_ADAPTER`) that unwraps the HUD's single-child listView root before it reaches the production renderer — the renderer crashes on the unbounded sliver height under that root (upstream widget bug per SKILL.md §5b; `game/*` itself is untouched by the pipeline). Rendering: the widget requires js_widget_runtime >= 0.4.156 and always drives the bridge-owned voxel node (`voxel.mesh` per dirty chunk + one tiny `voxel.camera` per frame — geometry crosses the bridge once per chunk, not per frame); a failed or hung capability probe renders a static update card — there is no scene3d meshes fallback. Boot renders a splash card synchronously at eval (no blank panel while storage + world gen run) and the spawn ring streams in frame-capped (3 chunks/frame, nearest first) instead of one multi-second upload burst; `[facraft] boot:` console lines attribute the storage/world/terrain split in field reports. A `Facraft.prof` profiler (exported via exportState + `[facraft]` console summary every 300 frames + F3 overlay lines) reports hud/mesh frame cost and upload volume.
 
+**0.2.24 — raw byte lane for chunk bytes**: when the probe also reports
+`bin: true` (js_widget_runtime 0.4.171+ on the QuickJS native-bytes
+backend), `voxel.blocks` uploads cross via `jsr.hostCallBinary(
+'voxel.blocks.bin', …)` — same 'JVXM' envelope, but the body is the RAW
+block bytes instead of their base64 string: ~25% less wire volume per
+chunk and zero b64 encode/decode on either side. Engines without the
+lane keep the base64 JSON path; nothing else changes.
+
 `block-targeted` is byte-identical to `first-run` by design: the HUD has no target indicator yet (the crosshair ray hit is asserted via `exportState` in `npm run goldens:verify`). `crafting-crafted`, `health-change` and `saved-reload` seed `jsr.storage` with a deterministic save payload (see `tools/goldens.js` `savePayload`) because those states need pre-mined resources / a damaged player / an existing world that live event replay cannot reach (worldgen has no trees, so logs for planks are unobtainable in a fresh world).
