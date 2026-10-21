@@ -19,6 +19,12 @@ Facraft.worldgen = (function() {
 
   function surfaceBlock(seed, wx, wz, h) {
     if (h > 34) return B().STONE; // mountains
+    // Spawn ring always rolls temperate: the first thing a new player
+    // sees must be grass, never a desert/mountain roll of the biome
+    // noise (report: repeated "no grass" spawns right after the app
+    // update — the biome pick is pure seed luck at the ring).
+    var d = Math.max(Math.abs(wx), Math.abs(wz));
+    if (d <= 24) return B().GRASS;
     var sand = N().value2(seed + 91, wx * 0.05, wz * 0.05);
     if (h < 18 || sand > 0.55) return B().SAND; // lowlands / sandy patches
     return B().GRASS;
