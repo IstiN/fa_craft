@@ -15,12 +15,24 @@ Facraft.worldgen = (function() {
     var detail = N().fbm2(seed + 555, wx * 0.06, wz * 0.06, 2);
     var h = 24 + base * 16 + detail * 3;
     h = Math.max(4, Math.min(CHUNK_Y - 6, Math.round(h)));
-    // Spawn ring stays gentle hills: clamp the height so no mountain
-    // wall (h > 34) or pit (h < 18) sits where the player first lands —
-    // the surfaceBlock ring rule alone left stone cliffs inside the ring.
+    // Spawn ring: blend the terrain toward a gentle dome at h≈27 —
+    // clamping (the old max(24,min(34,h))) DEFORMED the landscape: the
+    // floor flattened whole neighborhoods into a pancake and the cap
+    // left the spawn column a lone tower (seed 111: eye 12 blocks above
+    // the surroundings — the player 'hangs in a void'). Smoothstep
+    // keeps natural hills at the ring edge and a solid spawn view.
     var d = Math.max(Math.abs(wx), Math.abs(wz));
     if (d <= 40) {
-      h = Math.max(24, Math.min(34, h)); // at/above eye height — terrain fills the lower frame
+      var t = d / 40;
+      t = t * t * (3 - 2 * t);
+      // Keep 55% of the natural relief inside the dome: a fully flat
+      // dome compresses the near ground into a thin pale band that
+      // reads as void — rolling terrain is what makes the ground READ
+      // as ground.
+      var relief = h - 27;
+      if (relief > 0) relief *= 0.75; else relief *= 0.85;
+      h = 27 + relief * (1 - t) + (h - 27) * t;
+      h = Math.max(20, Math.min(34, Math.round(h)));
     }
     return h;
   }
@@ -54,7 +66,15 @@ Facraft.worldgen = (function() {
     if (y === h) b = surf;
     else if (y >= h - 3 && surf !== bs.STONE) b = (surf === bs.SAND) ? bs.SAND : bs.DIRT;
     else b = bs.STONE;
-    if (isCave(seed, wx, y, wz)) return bs.AIR;
+    if (isCave(seed, wx, y, wz)) {
+      // The spawn ring keeps a solid crust: cave mouths eating the
+      // surface next to the spawn read as holes into the void (the
+      // world "hangs in emptiness" and mobs by the hole look like they
+      // float). Caves still open the surface outside the ring.
+      var d = Math.max(Math.abs(wx), Math.abs(wz));
+      if (d <= 40 && y > h - 6) return b;
+      return bs.AIR;
+    }
     return b;
   }
 

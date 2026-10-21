@@ -90,8 +90,8 @@ test('voxel adapter (native): voxel node, one blocks upload per chunk, camera pe
   assert.ok(meshes.slice(1).every((m) => !m.palette),
     'later uploads reuse the runtime-cached palette');
   // Let the frame-capped streamer finish the ring before measuring:
-  // a 7x7 ring takes ~17 frames at cap 3.
-  await jsr.pumpFrames(24, 16.6);
+  // an 11x11 ring (radius 5) takes ~41 frames at cap 3.
+  await jsr.pumpFrames(44, 16.6);
   const up0 = meshes.length;
   const cam0 = jsr.callCount('hostCall:voxel.camera');
   // Pause the fauna: wandering mobs legitimately re-upload their chunks.

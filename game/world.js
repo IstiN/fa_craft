@@ -142,7 +142,7 @@ Facraft.world = (function() {
         // blocks above flat terrain fills the frame with sky and reads
         // as "the player hangs in a void" — the most-reported first
         // impression. The near ground must fill the lower half.
-        pitch: -0.45,
+        pitch: -0.55,
         onGround: true, flying: false,
       },
     };
