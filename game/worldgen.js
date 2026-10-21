@@ -14,7 +14,15 @@ Facraft.worldgen = (function() {
     var base = N().fbm2(seed, wx * 0.012, wz * 0.012, 4); // [-1,1]
     var detail = N().fbm2(seed + 555, wx * 0.06, wz * 0.06, 2);
     var h = 24 + base * 16 + detail * 3;
-    return Math.max(4, Math.min(CHUNK_Y - 6, Math.round(h)));
+    h = Math.max(4, Math.min(CHUNK_Y - 6, Math.round(h)));
+    // Spawn ring stays gentle hills: clamp the height so no mountain
+    // wall (h > 34) or pit (h < 18) sits where the player first lands —
+    // the surfaceBlock ring rule alone left stone cliffs inside the ring.
+    var d = Math.max(Math.abs(wx), Math.abs(wz));
+    if (d <= 40) {
+      h = Math.max(20, Math.min(28, h));
+    }
+    return h;
   }
 
   function surfaceBlock(seed, wx, wz, h) {
@@ -24,7 +32,7 @@ Facraft.worldgen = (function() {
     // noise (report: repeated "no grass" spawns right after the app
     // update — the biome pick is pure seed luck at the ring).
     var d = Math.max(Math.abs(wx), Math.abs(wz));
-    if (d <= 24) return B().GRASS;
+    if (d <= 40) return B().GRASS;
     var sand = N().value2(seed + 91, wx * 0.05, wz * 0.05);
     if (h < 18 || sand > 0.55) return B().SAND; // lowlands / sandy patches
     return B().GRASS;
