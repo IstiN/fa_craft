@@ -20,7 +20,7 @@ Facraft.worldgen = (function() {
     // the surfaceBlock ring rule alone left stone cliffs inside the ring.
     var d = Math.max(Math.abs(wx), Math.abs(wz));
     if (d <= 40) {
-      h = Math.max(20, Math.min(28, h));
+      h = Math.max(24, Math.min(34, h)); // at/above eye height — terrain fills the lower frame
     }
     return h;
   }

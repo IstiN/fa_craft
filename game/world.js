@@ -137,7 +137,12 @@ Facraft.world = (function() {
       spawn: { x: 0.5, y: spawnY, z: 0.5 },
       player: {
         x: 0.5, y: spawnY, z: 0.5,
-        vx: 0, vy: 0, vz: 0, yaw: 0, pitch: 0,
+        vx: 0, vy: 0, vz: 0, yaw: 0,
+        // Spawn looking slightly DOWN: a level view from an eye 1.6
+        // blocks above flat terrain fills the frame with sky and reads
+        // as "the player hangs in a void" — the most-reported first
+        // impression. The near ground must fill the lower half.
+        pitch: -0.45,
         onGround: true, flying: false,
       },
     };

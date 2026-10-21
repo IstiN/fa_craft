@@ -10,7 +10,10 @@ Facraft.voxel = (function() {
   var WG = function() { return Facraft.worldgen; };
   var B = function() { return Facraft.blocks; };
 
-  var VIEW_RADIUS = 2;  // chunk radius meshed/uploaded
+  var VIEW_RADIUS = 4;  // chunk radius meshed/uploaded — 2 left a wall of
+  // sky ~40 blocks out that read as "floating in a void" on the wide
+  // preview; 4 (64 blocks) + the camera fog below melt the streamed
+  // world's edge into the sky instead of cutting it off
   var FOV = 72;
 
   // ---- native voxel node (I4) ----
@@ -381,6 +384,10 @@ Facraft.voxel = (function() {
       position: [player.x, player.y + Facraft.physics.EYE_H, player.z],
       yaw: player.yaw, pitch: player.pitch,
       light: sky.light, skyColor: sky.color, fov: FOV,
+      // Distance fog tied to the stream radius: the far edge of the
+      // meshed world fades into the sky instead of cutting off into
+      // void — the fix for the "islands hanging in emptiness" read.
+      fog: [(VIEW_RADIUS - 2) * 16 - 8, VIEW_RADIUS * 16 + 4],
       // No shader-noise texturing: affine uv on a software rasterizer
       // can only be tamed by adaptive subdivision, and every variant of
       // that (w1..w5) traded one artifact for another — swimming, band

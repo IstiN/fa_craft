@@ -81,7 +81,7 @@ test('voxel adapter (native): voxel node, one blocks upload per chunk, camera pe
   assert.ok(node, 'voxel viewport node in the render tree');
   assert.strictEqual(findNode(jsr.lastTree, (n) => n.type === 'scene3d'), null,
     'no legacy scene3d node once the native path is on');
-  assert.ok(meshes.length >= 25, '5x5 view ring uploaded at boot, got ' + meshes.length);
+  assert.ok(meshes.length >= 25, 'core view ring uploaded at boot, got ' + meshes.length);
   assert.ok(meshes.every((m) => typeof m.blocks === 'string' && m.blocks.length > 20000 &&
     m.size[0] === 16 && m.size[1] === 64 && m.size[2] === 16),
     'raw 16x64x16 block bytes cross the bridge, not mesh JSON');
@@ -89,6 +89,9 @@ test('voxel adapter (native): voxel node, one blocks upload per chunk, camera pe
     'the tone palette rides the first upload');
   assert.ok(meshes.slice(1).every((m) => !m.palette),
     'later uploads reuse the runtime-cached palette');
+  // Let the frame-capped streamer finish the ring before measuring:
+  // a 7x7 ring takes ~17 frames at cap 3.
+  await jsr.pumpFrames(24, 16.6);
   const up0 = meshes.length;
   const cam0 = jsr.callCount('hostCall:voxel.camera');
   // Pause the fauna: wandering mobs legitimately re-upload their chunks.
@@ -155,9 +158,9 @@ test('voxel adapter (native): boot streams the ring frame-capped, nearest first'
     'the first frame uploads at most the per-frame cap, got ' + terrain().length);
   assert.ok(terrain().some((m) => m.key === '0,0'),
     'nearest-first: the player chunk streams in frame 1');
-  await jsr.pumpFrames(12, 16.6);
-  assert.ok(terrain().length >= 25,
-    'the full 5x5 ring lands within a dozen frames, got ' + terrain().length);
+  await jsr.pumpFrames(20, 16.6);
+  assert.ok(terrain().length >= 49,
+    'the full 7x7 ring lands within ~20 frames, got ' + terrain().length);
 });
 
 test('voxel adapter (fallback): pre-0.4.163 runtimes keep the JS-meshed path', async () => {
@@ -172,12 +175,12 @@ test('voxel adapter (fallback): pre-0.4.163 runtimes keep the JS-meshed path', a
     },
   });
   sandbox.Facraft.voxel.pinBudget(3); // pin: fixed frame counts, see ut_perf
-  await jsr.pumpFrames(12, 16.6);
+  await jsr.pumpFrames(20, 16.6);
   assert.strictEqual(blocks.length, 0,
     'no raw-block uploads when the runtime does not advertise blocks');
   const terrain = meshes.filter((m) => !String(m.key).startsWith('__'));
-  assert.ok(terrain.length >= 25,
-    'the ring uploads as JS-meshed voxel.mesh buffers, got ' + terrain.length);
+  assert.ok(terrain.length >= 49,
+    'the 7x7 ring uploads as JS-meshed voxel.mesh buffers, got ' + terrain.length);
   assert.ok(terrain.every((m) => m.positions.length && m.indices.length),
     'mesh buffers stay non-empty on the fallback path');
 });
@@ -225,16 +228,16 @@ test('voxel adapter (native): walking evicts off-ring chunks behind the player',
   await jsr.pumpFrames(5, 16.6);
   const up0 = jsr.callCount('hostCall:voxel.blocks');
   assert.strictEqual(removed.length, 0, 'no eviction before movement');
-  // Teleport 3 chunks east: the old ring's west columns leave the
+  // Teleport 6 chunks east: the old ring's west columns leave the
   // ring+1 margin and must be evicted; the new ring uploads (raw block
   // bytes via voxel.blocks — the Dart-meshed native path, now default).
-  F.state.world.player.x += 48;
+  F.state.world.player.x += 96;
   await jsr.pumpFrames(2, 16.6);
   assert.ok(removed.length > 0, 'off-ring chunks evicted after walking');
   assert.ok(jsr.callCount('hostCall:voxel.blocks') > up0, 'new ring uploaded');
   // Walking back re-uploads the evicted chunks (world state replays edits).
   const up1 = jsr.callCount('hostCall:voxel.blocks');
-  F.state.world.player.x -= 48;
+  F.state.world.player.x -= 96;
   await jsr.pumpFrames(2, 16.6);
   assert.ok(jsr.callCount('hostCall:voxel.blocks') > up1, 'evicted chunks re-upload on return');
 });
