@@ -28,10 +28,10 @@ const HEIGHT = '860';
 
 // --freeze-clock pins Date.now to 1760000000000, so a first-run world seeds
 // from 1760000000000 & 0x7fffffff = 1210892288. The cells below are pinned by
-// worldgen determinism for that seed: spawn column (0,*,0) is grass at y=33,
-// dirt 32..30, stone 29+ (and seed 777 has stone at (0,19,0)).
+// worldgen determinism for that seed: spawn column (0,*,0) is grass at y=32,
+// dirt 31..29, stone 28+ (and seed 777 has stone at (0,19,0)).
 const FROZEN_SEED = 1210892288;
-const STONE_CELLS = [[0, 29, 0], [0, 28, 0], [0, 27, 0], [0, 26, 0]];
+const STONE_CELLS = [[0, 28, 0], [0, 27, 0], [0, 26, 0], [0, 25, 0]];
 
 const STORAGE_KEY = 'fa-craft:world:v1';
 const savePayload = (seed, dayTime, log, player) =>

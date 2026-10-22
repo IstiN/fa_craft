@@ -22,7 +22,7 @@ import './voxel.js';
 (function() {
   // Keep in sync with manifest.json — test/ut_version pins it. Logged in
   // the status line so field reports name the exact build they ran.
-  var VERSION = '0.2.28';
+  var VERSION = '0.2.29';
   Facraft.version = VERSION;
 
   var B = Facraft.blocks, W = Facraft.world, P = Facraft.physics,
@@ -337,6 +337,7 @@ import './voxel.js';
   };
 
   var RESERVED = { 'state.sync': 1, 'back': 1, 'llm.delta': 1, 'tile.refresh': 1 };
+  var GESTURE_ACTIONS = { joyMove: 1, joyEnd: 1 };
 
   function handleEvent(actionId, payload) {
     if (RESERVED[actionId]) return; // reserved host traffic — never UI actions
@@ -344,6 +345,7 @@ import './voxel.js';
     var handler = ACTIONS[actionId];
     if (!handler) return; // unknown actions are no-ops
     handler(payload);
+    if (GESTURE_ACTIONS[actionId]) return;
     render();
     exportNow();
   }

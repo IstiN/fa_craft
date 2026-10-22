@@ -50,9 +50,23 @@ Facraft.worldgen = (function() {
     return B().GRASS;
   }
 
+  // Three-octave 3D fBm (sum = o0 + 0.5*o1 + 0.25*o2, norm = 1.75; threshold
+  // 0.45 * 1.75 = 0.7875). Exact early-out bounds:
+  //   - after octave 0: max remaining is +0.75 → if v0 <= 0.0375, cannot > 0.7875
+  //   - after octave 1: max remaining is +0.25 → if s1 <= 0.5375, cannot > 0.7875
+  // Bit-identical to N().fbm3(seed + 777, ..., 3) > 0.45 while skipping
+  // ~65% of octave-1 and ~90% of octave-2 3D trilinear hashes on iOS JSC.
   function isCave(seed, wx, wy, wz) {
     if (wy < 2) return false;
-    return N().fbm3(seed + 777, wx * 0.09, wy * 0.11, wz * 0.09, 3) > 0.45;
+    var ns = N();
+    var s0 = (seed + 777) | 0;
+    var x = wx * 0.09, y = wy * 0.11, z = wz * 0.09;
+    var v0 = ns.value3(s0, x, y, z);
+    if (v0 <= 0.0375) return false;
+    var s1 = v0 + ns.value3(s0 + 1013, x * 2, y * 2, z * 2) * 0.5;
+    if (s1 <= 0.5375) return false;
+    var s2 = s1 + ns.value3(s0 + 2026, x * 4, y * 4, z * 4) * 0.25;
+    return s2 / 1.75 > 0.45;
   }
 
   // The block one world column holds at height y (0 < y <= h). This is the
@@ -66,15 +80,13 @@ Facraft.worldgen = (function() {
     if (y === h) b = surf;
     else if (y >= h - 3 && surf !== bs.STONE) b = (surf === bs.SAND) ? bs.SAND : bs.DIRT;
     else b = bs.STONE;
-    if (isCave(seed, wx, y, wz)) {
-      // The spawn ring keeps a solid crust: cave mouths eating the
-      // surface next to the spawn read as holes into the void (the
-      // world "hangs in emptiness" and mobs by the hole look like they
-      // float). Caves still open the surface outside the ring.
-      var d = Math.max(Math.abs(wx), Math.abs(wz));
-      if (d <= 40 && y > h - 6) return b;
-      return bs.AIR;
-    }
+    // The spawn ring keeps a solid crust: cave mouths eating the
+    // surface next to the spawn read as holes into the void (the
+    // world "hangs in emptiness" and mobs by the hole look like they
+    // float). Check the crust BEFORE sampling 3D cave noise.
+    var d = Math.max(Math.abs(wx), Math.abs(wz));
+    if (d <= 40 && y > h - 6) return b;
+    if (isCave(seed, wx, y, wz)) return bs.AIR;
     return b;
   }
 

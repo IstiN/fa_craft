@@ -10,10 +10,8 @@ Facraft.voxel = (function() {
   var WG = function() { return Facraft.worldgen; };
   var B = function() { return Facraft.blocks; };
 
-  var VIEW_RADIUS = 5;  // chunk radius meshed/uploaded — 2 left a wall of
-  // sky ~40 blocks out that read as "floating in a void" on the wide
-  // preview; 4 (64 blocks) + the camera fog below melt the streamed
-  // world's edge into the sky instead of cutting it off
+  var VIEW_RADIUS = 3;  // 7x7 chunk ring (49 chunks, 48m radius) — balances
+  // wide horizon + rim fog with mobile CPU/GPU budgets on JIT-less iOS JSC
   var FOV = 72;
 
   // ---- native voxel node (I4) ----
@@ -281,7 +279,7 @@ Facraft.voxel = (function() {
       }
     }
     cold.sort(function(a, b) { return (a.ahead - b.ahead) || (a.d2 - b.d2); });
-    var warm = Math.min(Math.max(0, streamBudget - 1), cold.length);
+    var warm = n > 0 ? 0 : Math.min(Math.max(0, streamBudget - 1), cold.length);
     for (var g = 0; g < warm; g++) {
       Facraft.world.pregen(w, cold[g].cx, cold[g].cz);
     }
