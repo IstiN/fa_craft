@@ -281,17 +281,27 @@ test('input: joystick stick offset comes from pan POSITION, not per-event deltas
   assert.ok(Math.hypot(dx, dz) > 0.5, 'full-deflection stick actually walks: ' + Math.hypot(dx, dz));
 });
 
-test('input: a lost joystick stream auto-releases the stick (watchdog)', async () => {
+test('input: stationary joystick hold keeps walking until panEnd', async () => {
   const { jsr, sandbox } = await bootGame();
   const F = sandbox.Facraft;
   await jsr.pumpFrames(1, 16.6);
-  jsr.fire('joyMove', { x: 48, y: 8 }); // engage — then the stream dies
-  await jsr.pumpFrames(30, 16.6);       // > 20 silent ticks: watchdog fires
+  F.state.world.player.y += 30; // avoid terrain blocking the horizontal assertion
+  jsr.fire('joyMove', { x: 48, y: 8 });
+  await jsr.pumpFrames(30, 16.6);
   const p1 = { x: F.state.world.player.x, z: F.state.world.player.z };
-  await jsr.pumpFrames(15, 16.6);
+  // A stationary finger emits no further panUpdate events. The held vector
+  // must survive until the explicit panEnd/panCancel lifecycle event.
+  await jsr.pumpFrames(30, 16.6);
   const dx = F.state.world.player.x - p1.x, dz = F.state.world.player.z - p1.z;
-  assert.ok(Math.hypot(dx, dz) < 0.15,
-    'no joyEnd/panCancel ever arrived, yet the player stopped: ' + Math.hypot(dx, dz));
+  assert.ok(Math.hypot(dx, dz) > 0.5,
+    'stationary hold stopped without panEnd: ' + Math.hypot(dx, dz));
+
+  jsr.fire('joyEnd');
+  const p2 = { x: F.state.world.player.x, z: F.state.world.player.z };
+  await jsr.pumpFrames(15, 16.6);
+  const ex = F.state.world.player.x - p2.x, ez = F.state.world.player.z - p2.z;
+  assert.ok(Math.hypot(ex, ez) < 0.15,
+    'panEnd did not release the stick: ' + Math.hypot(ex, ez));
 });
 
 test('input: a quick jump tap still hops (minimum impulse window)', async () => {

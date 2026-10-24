@@ -22,7 +22,7 @@ import './voxel.js';
 (function() {
   // Keep in sync with manifest.json — test/ut_version pins it. Logged in
   // the status line so field reports name the exact build they ran.
-  var VERSION = '0.2.29';
+  var VERSION = '0.2.30';
   Facraft.version = VERSION;
 
   var B = Facraft.blocks, W = Facraft.world, P = Facraft.physics,
@@ -48,7 +48,6 @@ import './voxel.js';
   };
   var held = {};
   var joy = { active: false, x: 0, z: 0 };
-  var joyIdleFrames = 0;     // ticks since the last joyMove — lost-stream guard
   var jumpImpulseTicks = 0;  // quick tap = a minimum-length jump impulse
   var breakHold = false;     // long-press mining (viewport)
   var breakCooldown = 0;     // tMs of the next allowed repeat-break
@@ -295,7 +294,6 @@ import './voxel.js';
 
   function onJoyMove(payload) {
     joy.active = true;
-    joyIdleFrames = 0;
     // The pad is 96x96: pan localPosition (x, y) minus the pad center is
     // the stick offset. (dx/dy are PER-EVENT deltas — using them as the
     // stick vector scaled movement to ~4% and read as "move is broken".)
@@ -376,13 +374,9 @@ import './voxel.js';
       moveS: joy.active ? joy.x : 0, moveF: joy.active ? joy.z : 0,
     };
     if (jumpImpulseTicks > 0) jumpImpulseTicks--;
-    // Lost-stream guard: panEnd/panCancel normally release the stick, but
-    // if the event stream dies mid-drag the player would run forever —
-    // ~20 silent ticks (~330 ms at 60 fps) with no joyMove auto-releases.
-    if (joy.active) {
-      joyIdleFrames++;
-      if (joyIdleFrames > 20) onJoyEnd();
-    }
+    // Keep the joystick held until panEnd/panCancel. Flutter emits no
+    // panUpdate while the finger is stationary, so an idle watchdog here
+    // incorrectly stopped a sustained hold after a fraction of a second.
     // Long-press mining repeats on the frame clock while the hold lasts.
     if (breakHold && tMs >= breakCooldown) {
       breakCooldown = tMs + BREAK_REPEAT_MS;
