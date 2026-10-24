@@ -5,6 +5,7 @@ require('./harness.js');
 
 const suites = [
   'ut_worldgen',
+  'ut_perf',
   'ut_eventlog',
   'ut_physics',
   'ut_raycast',

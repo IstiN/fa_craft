@@ -5,6 +5,25 @@ const { loadNamespace } = require('./harness.js');
 
 const MODS = ['game/rng.js', 'game/noise.js', 'game/worldgen.js', 'game/blocks.js', 'game/world.js'];
 
+test('noise: hot-loop optimization stays bit-identical to the 0.2.30 reference', async () => {
+  const { F } = await loadNamespace(['game/noise.js']);
+  const cases = [
+    [0, [-0.6508482650370001, 0.19352836773145676, -0.3818914225847948, 0.2623341590703416]],
+    [1, [0.3338790521712436, -0.15641590217540002, 0.2817592066111182, 0.07939613491538464]],
+    [42, [-0.2924024607048561, 0.04610616837257964, -0.22220994412543688, 0.031333146383601296]],
+    [123, [-0.1378046241056612, -0.3872984471009552, -0.27498118584015074, -0.35145835972833617]],
+    [499, [-0.06747158654427998, 0.19858755513785842, 0.018173708699353256, 0.2616729880331189]],
+  ];
+  for (const [i, expected] of cases) {
+    const seed = (i * 7919) | 0;
+    const x = (i % 37 - 18) * 0.137, y = (i % 23) * 0.191, z = (i % 41 - 20) * 0.113;
+    assert.deepStrictEqual([
+      F.noise.value2(seed, x, z), F.noise.value3(seed, x, y, z),
+      F.noise.fbm2(seed, x, z, 4), F.noise.fbm3(seed, x, y, z, 3),
+    ], expected, 'reference row ' + i);
+  }
+});
+
 test('worldgen: same seed yields byte-identical chunks (determinism)', async () => {
   const { F } = await loadNamespace(MODS);
   const a = F.worldgen.chunk(12345, 2, -3);

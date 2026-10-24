@@ -10,9 +10,10 @@ Facraft.worldgen = (function() {
   function index(lx, y, lz) { return (y * CHUNK_Z + lz) * CHUNK_X + lx; }
 
   // Surface height for a world column.
-  function height(seed, wx, wz) {
-    var base = N().fbm2(seed, wx * 0.012, wz * 0.012, 4); // [-1,1]
-    var detail = N().fbm2(seed + 555, wx * 0.06, wz * 0.06, 2);
+  function height(seed, wx, wz, ns) {
+    ns = ns || N();
+    var base = ns.fbm2(seed, wx * 0.012, wz * 0.012, 4); // [-1,1]
+    var detail = ns.fbm2(seed + 555, wx * 0.06, wz * 0.06, 2);
     var h = 24 + base * 16 + detail * 3;
     h = Math.max(4, Math.min(CHUNK_Y - 6, Math.round(h)));
     // Spawn ring: blend the terrain toward a gentle dome at h≈27 —
@@ -37,17 +38,17 @@ Facraft.worldgen = (function() {
     return h;
   }
 
-  function surfaceBlock(seed, wx, wz, h) {
-    if (h > 34) return B().STONE; // mountains
+  function surfaceBlock(seed, wx, wz, h, bs, ns) {
+    if (h > 34) return bs.STONE; // mountains
     // Spawn ring always rolls temperate: the first thing a new player
     // sees must be grass, never a desert/mountain roll of the biome
     // noise (report: repeated "no grass" spawns right after the app
     // update — the biome pick is pure seed luck at the ring).
     var d = Math.max(Math.abs(wx), Math.abs(wz));
-    if (d <= 40) return B().GRASS;
-    var sand = N().value2(seed + 91, wx * 0.05, wz * 0.05);
-    if (h < 18 || sand > 0.55) return B().SAND; // lowlands / sandy patches
-    return B().GRASS;
+    if (d <= 40) return bs.GRASS;
+    var sand = ns.value2(seed + 91, wx * 0.05, wz * 0.05);
+    if (h < 18 || sand > 0.55) return bs.SAND; // lowlands / sandy patches
+    return bs.GRASS;
   }
 
   // Three-octave 3D fBm (sum = o0 + 0.5*o1 + 0.25*o2, norm = 1.75; threshold
@@ -56,9 +57,8 @@ Facraft.worldgen = (function() {
   //   - after octave 1: max remaining is +0.25 → if s1 <= 0.5375, cannot > 0.7875
   // Bit-identical to N().fbm3(seed + 777, ..., 3) > 0.45 while skipping
   // ~65% of octave-1 and ~90% of octave-2 3D trilinear hashes on iOS JSC.
-  function isCave(seed, wx, wy, wz) {
+  function isCave(seed, wx, wy, wz, ns) {
     if (wy < 2) return false;
-    var ns = N();
     var s0 = (seed + 777) | 0;
     var x = wx * 0.09, y = wy * 0.11, z = wz * 0.09;
     var v0 = ns.value3(s0, x, y, z);
@@ -73,8 +73,7 @@ Facraft.worldgen = (function() {
   // exact fill rule chunk() applies per cell, factored out so groundY can
   // scan a single column without generating the whole chunk (boot path:
   // spawn height used to cost two throwaway 16x64x16 chunk generations).
-  function columnBlock(seed, wx, wz, y, h, surf) {
-    var bs = B();
+  function columnBlock(seed, wx, wz, y, h, surf, bs, ns, crust) {
     if (y === 0) return bs.BEDROCK;
     var b;
     if (y === h) b = surf;
@@ -84,22 +83,25 @@ Facraft.worldgen = (function() {
     // surface next to the spawn read as holes into the void (the
     // world "hangs in emptiness" and mobs by the hole look like they
     // float). Check the crust BEFORE sampling 3D cave noise.
-    var d = Math.max(Math.abs(wx), Math.abs(wz));
-    if (d <= 40 && y > h - 6) return b;
-    if (isCave(seed, wx, y, wz)) return bs.AIR;
+    if (crust && y > h - 6) return b;
+    if (isCave(seed, wx, y, wz, ns)) return bs.AIR;
     return b;
   }
 
   // Generate one chunk column into a fresh Uint8Array.
   function chunk(seed, cx, cz) {
     var a = new Uint8Array(CHUNK_X * CHUNK_Y * CHUNK_Z);
+    var bs = B(), ns = N(); // resolve modules once, not once per block
     for (var lx = 0; lx < CHUNK_X; lx++) {
       for (var lz = 0; lz < CHUNK_Z; lz++) {
         var wx = cx * CHUNK_X + lx, wz = cz * CHUNK_Z + lz;
-        var h = height(seed, wx, wz);
-        var surf = surfaceBlock(seed, wx, wz, h);
+        var h = height(seed, wx, wz, ns);
+        var surf = surfaceBlock(seed, wx, wz, h, bs, ns);
+        var crust = Math.max(Math.abs(wx), Math.abs(wz)) <= 40;
+        var ci = lz * CHUNK_X + lx;
         for (var y = 0; y <= h; y++) {
-          a[index(lx, y, lz)] = columnBlock(seed, wx, wz, y, h, surf);
+          a[ci] = columnBlock(seed, wx, wz, y, h, surf, bs, ns, crust);
+          ci += CHUNK_X * CHUNK_Z;
         }
       }
     }
@@ -111,10 +113,12 @@ Facraft.worldgen = (function() {
   // surface down — byte-identical to scanning a generated chunk, without
   // generating one.
   function groundY(seed, wx, wz) {
-    var h = height(seed, wx, wz);
-    var surf = surfaceBlock(seed, wx, wz, h);
+    var bs = B(), ns = N();
+    var h = height(seed, wx, wz, ns);
+    var surf = surfaceBlock(seed, wx, wz, h, bs, ns);
+    var crust = Math.max(Math.abs(wx), Math.abs(wz)) <= 40;
     for (var y = h; y >= 1; y--) {
-      if (columnBlock(seed, wx, wz, y, h, surf) !== 0) return y;
+      if (columnBlock(seed, wx, wz, y, h, surf, bs, ns, crust) !== 0) return y;
     }
     return 0; // fully carved column: the bedrock floor is the ground
   }

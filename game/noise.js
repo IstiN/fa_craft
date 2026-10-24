@@ -8,31 +8,75 @@ Facraft.noise = (function() {
     return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
   }
 
-  function hash3(seed, x, y, z) {
-    var h = Math.imul(x, 374761393) ^ Math.imul(y, 668265263) ^ Math.imul(z, 2147483647) ^ Math.imul(seed | 0, 2246822519);
-    h = Math.imul(h ^ (h >>> 13), 1274126177);
-    return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
-  }
-
-  function smooth(t) { return t * t * (3 - 2 * t); }
-  function lerp(a, b, t) { return a + (b - a) * t; }
-
+  // Hot worldgen path: the old nested hash/lerp helper calls repeated the
+  // same integer products eight times per 3D sample (four times in 2D).
+  // Sharing those products and inlining the interpolation is bit-identical
+  // but matters on QuickJS, which cannot JIT away the call overhead.
   function value2(seed, x, y) {
     var ix = Math.floor(x), iy = Math.floor(y);
-    var fx = smooth(x - ix), fy = smooth(y - iy);
-    return lerp(
-      lerp(hash2(seed, ix, iy), hash2(seed, ix + 1, iy), fx),
-      lerp(hash2(seed, ix, iy + 1), hash2(seed, ix + 1, iy + 1), fx), fy) * 2 - 1;
+    var fx = x - ix, fy = y - iy;
+    fx = fx * fx * (3 - 2 * fx); fy = fy * fy * (3 - 2 * fy);
+    var sh = Math.imul(seed | 0, 2246822519);
+    var x0 = Math.imul(ix, 374761393), x1 = Math.imul(ix + 1, 374761393);
+    var y0 = Math.imul(iy, 668265263), y1 = Math.imul(iy + 1, 668265263);
+    var h = x0 ^ y0 ^ sh;
+    h = Math.imul(h ^ (h >>> 13), 1274126177);
+    var v00 = ((h ^ (h >>> 16)) >>> 0) / 4294967296;
+    h = x1 ^ y0 ^ sh;
+    h = Math.imul(h ^ (h >>> 13), 1274126177);
+    var v10 = ((h ^ (h >>> 16)) >>> 0) / 4294967296;
+    h = x0 ^ y1 ^ sh;
+    h = Math.imul(h ^ (h >>> 13), 1274126177);
+    var v01 = ((h ^ (h >>> 16)) >>> 0) / 4294967296;
+    h = x1 ^ y1 ^ sh;
+    h = Math.imul(h ^ (h >>> 13), 1274126177);
+    var v11 = ((h ^ (h >>> 16)) >>> 0) / 4294967296;
+    var c0 = v00 + (v10 - v00) * fx;
+    var c1 = v01 + (v11 - v01) * fx;
+    return (c0 + (c1 - c0) * fy) * 2 - 1;
   }
 
   function value3(seed, x, y, z) {
     var ix = Math.floor(x), iy = Math.floor(y), iz = Math.floor(z);
-    var fx = smooth(x - ix), fy = smooth(y - iy), fz = smooth(z - iz);
-    var c00 = lerp(hash3(seed, ix, iy, iz), hash3(seed, ix + 1, iy, iz), fx);
-    var c10 = lerp(hash3(seed, ix, iy + 1, iz), hash3(seed, ix + 1, iy + 1, iz), fx);
-    var c01 = lerp(hash3(seed, ix, iy, iz + 1), hash3(seed, ix + 1, iy, iz + 1), fx);
-    var c11 = lerp(hash3(seed, ix, iy + 1, iz + 1), hash3(seed, ix + 1, iy + 1, iz + 1), fx);
-    return lerp(lerp(c00, c10, fy), lerp(c01, c11, fy), fz) * 2 - 1;
+    var fx = x - ix, fy = y - iy, fz = z - iz;
+    fx = fx * fx * (3 - 2 * fx); fy = fy * fy * (3 - 2 * fy); fz = fz * fz * (3 - 2 * fz);
+    var sh = Math.imul(seed | 0, 2246822519);
+    var x0 = Math.imul(ix, 374761393), x1 = Math.imul(ix + 1, 374761393);
+    var y0 = Math.imul(iy, 668265263), y1 = Math.imul(iy + 1, 668265263);
+    var z0 = Math.imul(iz, 2147483647), z1 = Math.imul(iz + 1, 2147483647);
+
+    var h = x0 ^ y0 ^ z0 ^ sh;
+    h = Math.imul(h ^ (h >>> 13), 1274126177);
+    var v000 = ((h ^ (h >>> 16)) >>> 0) / 4294967296;
+    h = x1 ^ y0 ^ z0 ^ sh;
+    h = Math.imul(h ^ (h >>> 13), 1274126177);
+    var v100 = ((h ^ (h >>> 16)) >>> 0) / 4294967296;
+    h = x0 ^ y1 ^ z0 ^ sh;
+    h = Math.imul(h ^ (h >>> 13), 1274126177);
+    var v010 = ((h ^ (h >>> 16)) >>> 0) / 4294967296;
+    h = x1 ^ y1 ^ z0 ^ sh;
+    h = Math.imul(h ^ (h >>> 13), 1274126177);
+    var v110 = ((h ^ (h >>> 16)) >>> 0) / 4294967296;
+    h = x0 ^ y0 ^ z1 ^ sh;
+    h = Math.imul(h ^ (h >>> 13), 1274126177);
+    var v001 = ((h ^ (h >>> 16)) >>> 0) / 4294967296;
+    h = x1 ^ y0 ^ z1 ^ sh;
+    h = Math.imul(h ^ (h >>> 13), 1274126177);
+    var v101 = ((h ^ (h >>> 16)) >>> 0) / 4294967296;
+    h = x0 ^ y1 ^ z1 ^ sh;
+    h = Math.imul(h ^ (h >>> 13), 1274126177);
+    var v011 = ((h ^ (h >>> 16)) >>> 0) / 4294967296;
+    h = x1 ^ y1 ^ z1 ^ sh;
+    h = Math.imul(h ^ (h >>> 13), 1274126177);
+    var v111 = ((h ^ (h >>> 16)) >>> 0) / 4294967296;
+
+    var c00 = v000 + (v100 - v000) * fx;
+    var c10 = v010 + (v110 - v010) * fx;
+    var c01 = v001 + (v101 - v001) * fx;
+    var c11 = v011 + (v111 - v011) * fx;
+    var c0 = c00 + (c10 - c00) * fy;
+    var c1 = c01 + (c11 - c01) * fy;
+    return (c0 + (c1 - c0) * fz) * 2 - 1;
   }
 
   function fbm2(seed, x, y, octaves) {

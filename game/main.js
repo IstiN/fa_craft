@@ -22,7 +22,7 @@ import './voxel.js';
 (function() {
   // Keep in sync with manifest.json — test/ut_version pins it. Logged in
   // the status line so field reports name the exact build they ran.
-  var VERSION = '0.2.30';
+  var VERSION = '0.2.31';
   Facraft.version = VERSION;
 
   var B = Facraft.blocks, W = Facraft.world, P = Facraft.physics,
@@ -55,9 +55,11 @@ import './voxel.js';
   var bootReady = false;
   var lastHudSig = '';
   var lastCamKey = '';
+  var lastAreaPcx = null, lastAreaPcz = null;
   var bootT0 = Date.now();      // boot timeline anchor for the boot logs
   var bootStreamLogged = false; // first complete spawn ring logs once
   var tickCostMs = 0; // EWMA of the tick body — drives the stream budget
+  var saveLogWorld = null, saveLogCount = 0, saveLogJson = '[]';
 
   // Lightweight profiler: windowed frame-cost counters, exported via
   // exportState and dumped to the console every 300 frames. This is how a
@@ -415,7 +417,10 @@ import './voxel.js';
       if (w.dead && w.player.flying) w.player.flying = false;
 
       var pcx = Math.floor(w.player.x / 16), pcz = Math.floor(w.player.z / 16);
-      W.ensureArea(w, pcx, pcz, W.LOAD_RADIUS);
+      if (pcx !== lastAreaPcx || pcz !== lastAreaPcz) {
+        lastAreaPcx = pcx; lastAreaPcz = pcz;
+        W.ensureArea(w, pcx, pcz, W.LOAD_RADIUS);
+      }
       var h0 = Date.now();
       render();
       prof.hudMs += Date.now() - h0;
@@ -483,17 +488,40 @@ import './voxel.js';
 
   // --- persistence ----------------------------------------------------------
 
+  // Running changes the player every save, but usually does not touch the
+  // event log. Re-stringifying thousands of old ops every five seconds is a
+  // periodic QuickJS hitch and allocation spike. Append only the new ops;
+  // a world replacement (load/new game) invalidates the whole cache.
+  function serializedLog(w) {
+    if (saveLogWorld !== w || saveLogCount > w.logOps.length) {
+      saveLogWorld = w;
+      saveLogCount = 0;
+      saveLogJson = '[]';
+    }
+    if (saveLogCount === w.logOps.length) return saveLogJson;
+    if (saveLogCount === 0) {
+      saveLogJson = JSON.stringify(w.logOps);
+    } else {
+      var added = [];
+      for (var i = saveLogCount; i < w.logOps.length; i++) {
+        added.push(JSON.stringify(w.logOps[i]));
+      }
+      saveLogJson = saveLogJson.slice(0, -1) +
+        (saveLogJson.length > 1 ? ',' : '') + added.join(',') + ']';
+    }
+    saveLogCount = w.logOps.length;
+    return saveLogJson;
+  }
+
   function save() {
     if (!bootReady || !state.world) return;
-    var p = state.world.player;
-    var payload = {
-      v: 1,
-      seed: state.world.seed,
-      dayTime: state.world.dayTime,
-      log: state.world.logOps,
-      player: { x: p.x, y: p.y, z: p.z, yaw: p.yaw, pitch: p.pitch, flying: p.flying === true },
-    };
-    jsr.storage.set(KEY, JSON.stringify(payload)).then(function() {
+    var w = state.world, p = w.player;
+    var player = { x: p.x, y: p.y, z: p.z, yaw: p.yaw, pitch: p.pitch, flying: p.flying === true };
+    var payload = '{"v":1,"seed":' + JSON.stringify(w.seed) +
+      ',"dayTime":' + JSON.stringify(w.dayTime) +
+      ',"log":' + serializedLog(w) +
+      ',"player":' + JSON.stringify(player) + '}';
+    jsr.storage.set(KEY, payload).then(function() {
       if (state.notice && state.notice.indexOf('Save failed') === 0) setNotice('');
     }, function() {
       setNotice('Save failed — progress will be lost if the game closes.'); // E2

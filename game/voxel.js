@@ -216,6 +216,7 @@ Facraft.voxel = (function() {
   // margin are evicted (voxel.chunkRemove) so long walks do not grow the
   // resident set — and the per-frame painter triangle count — forever.
   var lastEvictPcx = null, lastEvictPcz = null;
+  var lastColdPcx = null, lastColdPcz = null, coldComplete = false;
   var UPLOADS_PER_FRAME = 3;
   var GENS_PER_FRAME = 2;  // data-only worldgen warm-up budget per frame
 
@@ -245,6 +246,24 @@ Facraft.voxel = (function() {
   function isBudgetPinned() { return budgetPinned; }
   function currentBudget() { return streamBudget; }
 
+  // Renderer residency and JS world data have different lifetimes. Removing
+  // a host chunk does not release its Uint8Array in w.chunks, so an endless
+  // walk otherwise retains every chunk ever visited (~16 KB each). Keep
+  // player-edited chunks; all other bytes regenerate deterministically.
+  function evictWorldData(w, pcx, pcz) {
+    for (var key in w.chunks) {
+      var parts = key.split(',');
+      var kx = parseInt(parts[0], 10), kz = parseInt(parts[1], 10);
+      if (Math.abs(kx - pcx) <= VIEW_RADIUS + 1 &&
+          Math.abs(kz - pcz) <= VIEW_RADIUS + 1) continue;
+      var edited = w.edited && w.edited.has(key);
+      var legacyDirty = !w.edited && w.dirty.has(key);
+      if (!edited && !legacyDirty) delete w.chunks[key];
+      if (w.meshes) w.meshes.delete(key);
+      w.dirty.delete(key);
+    }
+  }
+
   function sync(w, player, prof) {
     if (!isNative()) return { uploaded: 0, pending: 0 };
     var pcx = Math.floor(player.x / 16), pcz = Math.floor(player.z / 16);
@@ -269,14 +288,18 @@ Facraft.voxel = (function() {
     // stutter report. Spreading generation over the approach keeps every
     // frame's worldgen work bounded.
     var cold = [];
-    for (var gx = -VIEW_RADIUS - 1; gx <= VIEW_RADIUS + 1; gx++) {
-      for (var gz = -VIEW_RADIUS - 1; gz <= VIEW_RADIUS + 1; gz++) {
-        if (!w.chunks[(pcx + gx) + ',' + (pcz + gz)]) {
-          var ahead = (player.vx || 0) * gx + (player.vz || 0) * gz;
-          cold.push({ cx: pcx + gx, cz: pcz + gz, ahead: -ahead,
-                      d2: gx * gx + gz * gz });
+    if (!coldComplete || pcx !== lastColdPcx || pcz !== lastColdPcz) {
+      lastColdPcx = pcx; lastColdPcz = pcz;
+      for (var gx = -VIEW_RADIUS - 1; gx <= VIEW_RADIUS + 1; gx++) {
+        for (var gz = -VIEW_RADIUS - 1; gz <= VIEW_RADIUS + 1; gz++) {
+          if (!w.chunks[(pcx + gx) + ',' + (pcz + gz)]) {
+            var ahead = (player.vx || 0) * gx + (player.vz || 0) * gz;
+            cold.push({ cx: pcx + gx, cz: pcz + gz, ahead: -ahead,
+                        d2: gx * gx + gz * gz });
+          }
         }
       }
+      coldComplete = cold.length === 0;
     }
     cold.sort(function(a, b) { return (a.ahead - b.ahead) || (a.d2 - b.d2); });
     var warm = n > 0 ? 0 : Math.min(Math.max(0, streamBudget - 1), cold.length);
@@ -294,6 +317,7 @@ Facraft.voxel = (function() {
           delete uploaded[key];
         }
       }
+      evictWorldData(w, pcx, pcz);
     }
     return { uploaded: n, pending: todo.length - n };
   }
@@ -421,6 +445,8 @@ Facraft.voxel = (function() {
     uploaded = {}; hlCell = '';
     paletteSent = false;
     budgetPinned = false;
+    lastEvictPcx = null; lastEvictPcz = null;
+    lastColdPcx = null; lastColdPcz = null; coldComplete = false;
   }
 
   return {

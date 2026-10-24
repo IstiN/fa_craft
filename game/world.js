@@ -107,6 +107,9 @@ Facraft.world = (function() {
   function setRaw(w, x, y, z, b) {
     var cx = Math.floor(x / 16), cz = Math.floor(z / 16);
     chunkOf(w, cx, cz)[W().index(x - cx * 16, y, z - cz * 16)] = b;
+    // Raw generated chunks are disposable; edited ones must survive view
+    // eviction because regenerating terrain would erase the player's edit.
+    if (w.edited) w.edited.add(key(cx, cz));
     markDirty(w, cx, cz);
     var lx = x - cx * 16, lz = z - cz * 16;
     if (lx === 0) markDirty(w, cx - 1, cz);
@@ -126,6 +129,7 @@ Facraft.world = (function() {
       seed: seed,
       chunks: {},
       dirty: new Set(),
+      edited: new Set(),
       meshes: new Map(),
       logOps: [],
       inventory: {},

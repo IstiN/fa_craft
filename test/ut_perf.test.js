@@ -1,7 +1,7 @@
 'use strict';
 const test = require('node:test');
 const assert = require('node:assert');
-const { loadNamespace } = require('./harness.js');
+const { bootGame, loadNamespace } = require('./harness.js');
 
 const MODS = ['game/rng.js', 'game/noise.js', 'game/blocks.js',
   'game/worldgen.js', 'game/world.js', 'game/mesh.js', 'game/voxel.js'];
@@ -78,4 +78,63 @@ test('perf: worldgen chunk bytes feed voxel.blocks directly', async () => {
   let solids = 0;
   for (let i = 0; i < c.length; i++) if (F.blocks.isSolid(c[i])) solids++;
   assert.ok(solids > 1000, 'seed 7 spawn chunk has terrain');
+});
+
+// Long-running scenario for crap4js profile/memory, not a wall-clock gate.
+// It follows the real mobile path: native binary chunk uploads, JSON payload
+// serialization, sustained sprint, chunk streaming and the 5 s autosave.
+test('perf: sustained sprint 12s memory/CPU scenario', async () => {
+  const { jsr, sandbox } = await bootGame({
+    voxelBinary: true,
+    serializePayloads: true,
+    recordHistory: false,
+  });
+  const F = sandbox.Facraft;
+  const seconds = Number(process.env.FACRAFT_PERF_SECONDS || 12);
+  const bootFrames = Number(process.env.FACRAFT_PERF_BOOT_FRAMES || 60);
+  const forceGc = process.env.FACRAFT_FORCE_GC === '1' && global.gc;
+  await jsr.pumpFrames(bootFrames, 16.6); // finish the spawn stream before measuring
+  const w = F.state.world;
+  const logSize = Number(process.env.FACRAFT_PERF_LOG_OPS || 0);
+  for (let i = 0; i < logSize; i++) {
+    w.logOps.push({ t: 'set', x: i % 128, y: 30, z: (i / 128) | 0, b: 1 });
+  }
+  if (forceGc) global.gc();
+  const memoryStart = process.memoryUsage();
+  const retainedStart = memoryStart.heapUsed + memoryStart.arrayBuffers;
+  w.mode = 'creative';
+  w.player.flying = true;
+  w.player.y += 40; // uninterrupted travel, including across chunk borders
+  const p0 = { x: w.player.x, z: w.player.z };
+  jsr.fireKey({ key: 'w', down: true, repeat: false });
+  jsr.fireKey({ key: 'control', down: true, repeat: false });
+
+  for (let second = 1; second <= seconds; second++) {
+    const t0 = performance.now();
+    const heap0 = process.memoryUsage().heapUsed;
+    await jsr.pumpFrames(60, 16.6);
+    let saveMs = 0;
+    if (second % 5 === 0) {
+      const s0 = performance.now();
+      jsr.intervals.forEach((fn) => fn());
+      saveMs = performance.now() - s0;
+    }
+    console.log('[facraft-perf] second=' + second +
+      ' wall=' + (performance.now() - t0).toFixed(1) + 'ms' +
+      ' save=' + saveMs.toFixed(1) + 'ms' +
+      ' heapDelta=' + ((process.memoryUsage().heapUsed - heap0) / 1048576).toFixed(1) + 'MB' +
+      ' chunks=' + Object.keys(w.chunks).length);
+  }
+  jsr.fireKey({ key: 'w', down: false, repeat: false });
+  jsr.fireKey({ key: 'control', down: false, repeat: false });
+  const travelled = Math.hypot(w.player.x - p0.x, w.player.z - p0.z);
+  if (forceGc) {
+    global.gc();
+    const memoryEnd = process.memoryUsage();
+    console.log('[facraft-perf] retainedGrowth=' +
+      ((memoryEnd.heapUsed + memoryEnd.arrayBuffers - retainedStart) / 1048576).toFixed(2) + 'MB' +
+      ' bufferGrowth=' + ((memoryEnd.arrayBuffers - memoryStart.arrayBuffers) / 1048576).toFixed(2) + 'MB');
+  }
+  assert.ok(travelled > Math.min(40, seconds * 2.5),
+    'scenario actually crossed chunk borders: ' + travelled);
 });

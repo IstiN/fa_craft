@@ -83,16 +83,28 @@ function fakeJsr() {
       border: '#334155', borderBright: '#475569', accent: '#818cf8',
       accent2: '#a78bfa', onAccent: '#0f172a', text: '#f1f5f9', muted: '#64748b',
     },
-    render(tree) { calls.push(['render', 0]); jsr.lastTree = tree; jsr.trees.push(tree); },
-    setTitle(t) { calls.push(['setTitle', 0]); jsr.title = t; },
-    exportState(obj) { calls.push(['exportState', 0]); exportState = obj; },
-    showError(msg) { calls.push(['showError', 0]); jsr.error = msg; },
+    recordHistory: true,
+    serializePayloads: false,
+    record(call) { if (jsr.recordHistory) calls.push(call); },
+    render(tree) {
+      if (jsr.serializePayloads) JSON.stringify(tree);
+      jsr.record(['render', 0]);
+      jsr.lastTree = tree;
+      if (jsr.recordHistory) jsr.trees.push(tree);
+    },
+    setTitle(t) { jsr.record(['setTitle', 0]); jsr.title = t; },
+    exportState(obj) {
+      if (jsr.serializePayloads) JSON.stringify(obj || {});
+      jsr.record(['exportState', 0]);
+      exportState = obj;
+    },
+    showError(msg) { jsr.record(['showError', 0]); jsr.error = msg; },
     onEvent(fn) { eventHandlers.push(fn); },
     onKey(fn) { keyHandlers.push(fn); },
     onViewport(fn) { jsr._viewportFn = fn; },
     viewport() { return { width: 480, height: 720 }; },
     hostCall(name, args) {
-      calls.push(['hostCall:' + name, approximateJsonSize(args)]);
+      jsr.record(['hostCall:' + name, approximateJsonSize(args)]);
       if (name === 'voxel.attach') {
         // host capability probe: rejectable so tests can force the
         // unsupported-update-card path (bootGame({ voxelNative: false }));
@@ -114,9 +126,11 @@ function fakeJsr() {
     },
     // Binary lane receiver (fire-and-forget in the real runtime).
     hostCallBinary(name, data) {
-      calls.push(['hostCallBinary:' + name, data ? data.byteLength : -1]);
+      jsr.record(['hostCallBinary:' + name, data ? data.byteLength : -1]);
       jsr.lastBinary[name] = data;
-      (jsr.allBinary[name] = jsr.allBinary[name] || []).push(data);
+      if (jsr.recordHistory) {
+        (jsr.allBinary[name] = jsr.allBinary[name] || []).push(data);
+      }
     },
     lastBinary: {},
     allBinary: {},
@@ -134,7 +148,7 @@ function fakeJsr() {
     fireTimeouts() { timeouts.splice(0).forEach((fn) => fn()); },
     exported: () => exportState,
     fire(actionId, payload) {
-      calls.push(['event:' + actionId, 0]);
+      jsr.record(['event:' + actionId, 0]);
       eventHandlers.forEach((fn) => fn(actionId, payload));
     },
     fireKey(ev) { keyHandlers.forEach((fn) => fn(ev)); },
@@ -169,6 +183,8 @@ async function bootGame(opts) {
   if (opts && 'voxelNative' in opts) jsr.voxelNative = opts.voxelNative;
   if (opts && 'voxelBlocks' in opts) jsr.voxelBlocks = opts.voxelBlocks;
   if (opts && opts.voxelBinary) jsr.voxelBinary = true;
+  if (opts && opts.serializePayloads) jsr.serializePayloads = true;
+  if (opts && opts.recordHistory === false) jsr.recordHistory = false;
   const seen = new Set();
   const out = [];
   bundle('game/main.js', 1, seen, out);
@@ -187,6 +203,9 @@ async function bootGame(opts) {
     Uint8Array,
     ArrayBuffer,
     DataView,
+    // Optional crap4js instrumentation when tests run under its profiler.
+    __crap_enter: globalThis.__crap_enter,
+    __crap_exit: globalThis.__crap_exit,
     // host-shimmed timers (globals in the widget sandbox, per the runtime)
     requestAnimationFrame: (fn) => jsr.requestAnimationFrame(fn),
     setTimeout: (fn, ms) => jsr.setTimeout(fn, ms),

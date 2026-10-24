@@ -242,6 +242,32 @@ test('voxel adapter (native): walking evicts off-ring chunks behind the player',
   assert.ok(jsr.callCount('hostCall:voxel.blocks') > up1, 'evicted chunks re-upload on return');
 });
 
+test('voxel cache: evicts raw terrain but preserves edited chunks off-ring', async () => {
+  const { jsr, sandbox } = await bootGame({ voxelBinary: true });
+  const F = sandbox.Facraft;
+  await jsr.pumpFrames(20, 16.6);
+  const w = F.state.world;
+  const editedKey = F.world.key(0, 0);
+  const plainKey = F.world.key(0, 1);
+  assert.ok(w.chunks[plainKey], 'plain control chunk is resident');
+  F.world.setBlock(w, 0, 40, 0, F.blocks.BRICKS);
+
+  w.mode = 'creative';
+  w.player.flying = true;
+  w.player.x += 160;
+  await jsr.pumpFrames(5, 16.6);
+  assert.ok(!w.chunks[plainKey], 'unedited raw bytes are released');
+  assert.ok(w.chunks[editedKey], 'edited raw bytes survive eviction');
+  assert.ok(w.edited.has(editedKey), 'edit provenance is explicit');
+  assert.ok(Object.keys(w.chunks).length <= 82,
+    'JS cache is bounded by the 9x9 warm ring plus edited chunks');
+
+  w.player.x -= 160;
+  await jsr.pumpFrames(5, 16.6);
+  assert.strictEqual(F.world.get(w, 0, 40, 0), F.blocks.BRICKS,
+    'returning to the chunk does not regenerate away the edit');
+});
+
 test('input: viewport wires drag-look AND trackpad scroll-look', async () => {
   const { jsr } = await bootGame();
   await jsr.pumpFrames(2, 16.6);

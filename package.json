@@ -13,7 +13,7 @@
     "goldens:verify": "node tools/goldens.js verify"
   },
   "devDependencies": {
-    "crap4js": "github:vabhzw17eg2qu4m9-bit/crap4js#6d80f53e739b",
+    "crap4js": "github:IstiN/crap4js#b34c995ab6d4",
     "nyc": "17.1.0"
   }
 }
