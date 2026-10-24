@@ -22,7 +22,7 @@ import './voxel.js';
 (function() {
   // Keep in sync with manifest.json — test/ut_version pins it. Logged in
   // the status line so field reports name the exact build they ran.
-  var VERSION = '0.2.31';
+  var VERSION = '0.2.32';
   Facraft.version = VERSION;
 
   var B = Facraft.blocks, W = Facraft.world, P = Facraft.physics,
@@ -387,101 +387,126 @@ import './voxel.js';
     return input;
   }
 
+  function frameDelta(tMs) {
+    var dt = lastFrame ? Math.min((tMs - lastFrame) / 1000, P.DT_MAX) : 0;
+    if (dt < 0) dt = 0;
+    lastFrame = tMs;
+    if (dt > 0) state.fps = state.fps ? state.fps * 0.9 + (1 / dt) * 0.1 : 1 / dt;
+    return dt;
+  }
+
+  function advanceClock(w, dt) {
+    w.dayTime = D.advance(w.dayTime, dt);
+    if (state.noticeTtl > 0) {
+      state.noticeTtl -= dt * 1000;
+      if (state.noticeTtl <= 0) { state.notice = ''; state.noticeTtl = 0; }
+    }
+  }
+
+  function stepPlayer(w, input, dt) {
+    var res = P.step(w.player, input, w, dt, w.mode);
+    if (res.landed > 0) {
+      var dmg = S.landing(w, res.landed).damage;
+      if (dmg > 0) {
+        try { W.apply(w, { t: 'damage', cause: 'fall', n: dmg }); } catch (e) { /* never blocks the loop */ }
+      }
+    }
+    var vdmg = S.voidTick(w, w.player.y, dt);
+    if (vdmg.damage > 0) {
+      try { W.apply(w, { t: 'damage', cause: 'void', n: vdmg.damage }); } catch (e2) { /* ditto */ }
+    }
+    if (w.dead && w.player.flying) w.player.flying = false;
+  }
+
+  function ensurePlayerArea(w) {
+    var pcx = Math.floor(w.player.x / 16), pcz = Math.floor(w.player.z / 16);
+    if (pcx !== lastAreaPcx || pcz !== lastAreaPcz) {
+      lastAreaPcx = pcx; lastAreaPcz = pcz;
+      W.ensureArea(w, pcx, pcz, W.LOAD_RADIUS);
+    }
+  }
+
+  function pushCamera(w) {
+    // Camera pushes wake a full scene repaint — push only when the eye
+    // state actually moved (quantized to ~1/64 block / ~1/256 rad), so
+    // standing still costs ZERO paints while look stays per-event
+    // responsive (a time gate would add visible drag latency).
+    var cp = w.player;
+    var camKey = Math.round(cp.x * 64) + '|' + Math.round(cp.y * 64) + '|' +
+      Math.round(cp.z * 64) + '|' + Math.round(cp.yaw * 256) + '|' +
+      Math.round(cp.pitch * 256) + '|' + Math.floor(w.dayTime * 2);
+    if (camKey !== lastCamKey) {
+      lastCamKey = camKey;
+      Facraft.voxel.camera(w, w.player, D.sky(w.dayTime));
+    }
+  }
+
+  function syncWorld(w, dt) {
+    var h0 = Date.now();
+    render();
+    prof.hudMs += Date.now() - h0;
+
+    // Native voxel path (I4): dirty/new chunks + aim highlight + camera.
+    // Runs after render() so the highlight tracks the fresh raycast target.
+    var m0 = Date.now();
+    var sres = Facraft.voxel.sync(w, w.player, prof);
+    if (!bootStreamLogged && sres.pending === 0 && Facraft.voxel.isNative()) {
+      bootStreamLogged = true;
+      console.log('[facraft] boot: spawn ring streamed at +' +
+        (Date.now() - bootT0) + 'ms');
+    }
+    Facraft.voxel.highlight(w, state.target);
+    pushCamera(w);
+    // Passive mobs wander after the camera push — their chunk uploads
+    // ride the same frame.
+    Facraft.mobs.tick(w, dt);
+    // Particles + meat drops; pickups feed the player.
+    var ate = Facraft.fx.tick(w, dt);
+    if (ate.length) {
+      w.health = Math.min(20, w.health + 2 * ate.length);
+      setNotice(ate[0] === 'pig' ? 'Pork chop! +2 HP' : 'Chicken! +2 HP');
+    }
+    prof.meshMs += Date.now() - m0;
+  }
+
+  function adaptStreamBudget(tickStart) {
+    // EWMA of the whole tick body clamps the upload budget so a slow frame
+    // sheds streaming work instead of compounding the hitch.
+    var tickCost = Date.now() - tickStart;
+    tickCostMs = tickCostMs ? tickCostMs * 0.9 + tickCost * 0.1 : tickCost;
+    if (!Facraft.voxel.isBudgetPinned()) {
+      Facraft.voxel.setBudget(Facraft.voxel.budgetFor(tickCostMs));
+    }
+  }
+
+  function logProfile() {
+    if (prof.frames % 300 !== 0) return;
+    console.log('[facraft] v=' + VERSION +
+      ' fps=' + Math.round(state.fps) +
+      ' hud=' + (prof.hudMs / prof.frames).toFixed(1) + 'ms' +
+      ' mesh=' + (prof.meshMs / prof.frames).toFixed(1) + 'ms' +
+      ' uploads=' + prof.uploads + ' meshKB=' + Math.round(prof.meshBytes / 1024) +
+      ' native=' + Facraft.voxel.isNative());
+    prof.frames = 0; prof.hudMs = 0; prof.meshMs = 0; prof.camCalls = 0;
+  }
+
   function tick(tMs) {
     if (bootReady && state.world) {
-      var dt = lastFrame ? Math.min((tMs - lastFrame) / 1000, P.DT_MAX) : 0;
-      if (dt < 0) dt = 0;
-      lastFrame = tMs;
-      if (dt > 0) state.fps = state.fps ? state.fps * 0.9 + (1 / dt) * 0.1 : 1 / dt;
-
+      var dt = frameDelta(tMs);
       var w = state.world;
       var tickStart = Date.now(); // adaptive stream budget measures this
-      w.dayTime = D.advance(w.dayTime, dt);
-      if (state.noticeTtl > 0) {
-        state.noticeTtl -= dt * 1000;
-        if (state.noticeTtl <= 0) { state.notice = ''; state.noticeTtl = 0; }
-      }
-
-      var input = collectInput(tMs);
-      var res = P.step(w.player, input, w, dt, w.mode);
-      if (res.landed > 0) {
-        var dmg = S.landing(w, res.landed).damage;
-        if (dmg > 0) {
-          try { W.apply(w, { t: 'damage', cause: 'fall', n: dmg }); } catch (e) { /* never blocks the loop */ }
-        }
-      }
-      var vdmg = S.voidTick(w, w.player.y, dt);
-      if (vdmg.damage > 0) {
-        try { W.apply(w, { t: 'damage', cause: 'void', n: vdmg.damage }); } catch (e2) { /* ditto */ }
-      }
-      if (w.dead && w.player.flying) w.player.flying = false;
-
-      var pcx = Math.floor(w.player.x / 16), pcz = Math.floor(w.player.z / 16);
-      if (pcx !== lastAreaPcx || pcz !== lastAreaPcz) {
-        lastAreaPcx = pcx; lastAreaPcz = pcz;
-        W.ensureArea(w, pcx, pcz, W.LOAD_RADIUS);
-      }
-      var h0 = Date.now();
-      render();
-      prof.hudMs += Date.now() - h0;
-
-      // Native voxel path (I4): dirty/new chunks + aim highlight + camera.
-      // Runs after render() so the highlight tracks the fresh raycast target.
-      var m0 = Date.now();
-      var sres = Facraft.voxel.sync(w, w.player, prof);
-      if (!bootStreamLogged && sres.pending === 0 && Facraft.voxel.isNative()) {
-        bootStreamLogged = true;
-        console.log('[facraft] boot: spawn ring streamed at +' +
-          (Date.now() - bootT0) + 'ms');
-      }
-      Facraft.voxel.highlight(w, state.target);
-      // Camera pushes wake a full scene repaint — push only when the eye
-      // state actually moved (quantized to ~1/64 block / ~1/256 rad), so
-      // standing still costs ZERO paints while look stays per-event
-      // responsive (a time gate would add visible drag latency).
-      var cp = w.player;
-      var camKey = Math.round(cp.x * 64) + '|' + Math.round(cp.y * 64) + '|' +
-        Math.round(cp.z * 64) + '|' + Math.round(cp.yaw * 256) + '|' +
-        Math.round(cp.pitch * 256) + '|' + Math.floor(w.dayTime * 2);
-      if (camKey !== lastCamKey) {
-        lastCamKey = camKey;
-        Facraft.voxel.camera(w, w.player, D.sky(w.dayTime));
-      }
-      // Passive mobs wander after the camera push — their chunk uploads
-      // ride the same frame.
-      Facraft.mobs.tick(w, dt);
-      // Particles + meat drops; pickups feed the player.
-      var ate = Facraft.fx.tick(w, dt);
-      if (ate.length) {
-        w.health = Math.min(20, w.health + 2 * ate.length);
-        setNotice(ate[0] === 'pig' ? 'Pork chop! +2 HP' : 'Chicken! +2 HP');
-      }
-      prof.meshMs += Date.now() - m0;
+      advanceClock(w, dt);
+      stepPlayer(w, collectInput(tMs), dt);
+      ensurePlayerArea(w);
+      syncWorld(w, dt);
 
       // exportState every frame: the payload is small (scalars + inventory
       // map) and CLI snapshots must stay live — the bridge cost that killed
       // the old path was the megabyte mesh JSON, not small calls.
       exportNow();
-
-      // Adaptive stream budget: EWMA of the whole tick body (worldgen,
-      // physics, HUD tree, sync) clamps the per-frame upload budget so a
-      // slow frame sheds streaming work instead of compounding the hitch.
-      var tickCost = Date.now() - tickStart;
-      tickCostMs = tickCostMs ? tickCostMs * 0.9 + tickCost * 0.1 : tickCost;
-      if (!Facraft.voxel.isBudgetPinned()) {
-        Facraft.voxel.setBudget(Facraft.voxel.budgetFor(tickCostMs));
-      }
-
+      adaptStreamBudget(tickStart);
       prof.frames++;
-      if (prof.frames % 300 === 0) {
-        console.log('[facraft] v=' + VERSION +
-          ' fps=' + Math.round(state.fps) +
-          ' hud=' + (prof.hudMs / prof.frames).toFixed(1) + 'ms' +
-          ' mesh=' + (prof.meshMs / prof.frames).toFixed(1) + 'ms' +
-          ' uploads=' + prof.uploads + ' meshKB=' + Math.round(prof.meshBytes / 1024) +
-          ' native=' + Facraft.voxel.isNative());
-        prof.frames = 0; prof.hudMs = 0; prof.meshMs = 0; prof.camCalls = 0;
-      }
+      logProfile();
     }
     requestAnimationFrame(tick);
   }

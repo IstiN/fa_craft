@@ -59,47 +59,47 @@ Facraft.world = (function() {
     return v ? v(op) : 'unknown op ' + op.t;
   }
 
+  var MUTATORS = {
+    set: function(w, op) {
+      // Unconditional set (last-write-wins): keeps the log replayable and
+      // idempotent — guards live only at the trust boundaries.
+      var B = Facraft.blocks;
+      var old = get(w, op.x, op.y, op.z);
+      if (op.b !== B.BEDROCK && (op.y === 0 || old === B.BEDROCK)) {
+        throw new Error('bedrock is unbreakable');
+      }
+      setRaw(w, op.x, op.y, op.z, op.b);
+      if (op.b === B.AIR) {
+        if (old !== B.AIR) w.inventory[old] = (w.inventory[old] || 0) + 1; // break → collect
+      } else if ((w.inventory[op.b] || 0) > 0) {
+        w.inventory[op.b]--; // place → consume (floored at zero, deterministic)
+      }
+    },
+    craft: function(w, op) {
+      var res = Facraft.craft.craft(w.inventory, op.r, op.n);
+      if (!res.ok) throw new Error('craft failed: ' + res.error);
+      w.inventory = res.inv;
+    },
+    damage: function(w, op) {
+      Facraft.survival.damage(w, op.cause, op.n);
+    },
+    respawn: function(w) {
+      Facraft.survival.respawn(w, w.spawn);
+      w.player.x = w.spawn.x; w.player.y = w.spawn.y; w.player.z = w.spawn.z;
+    },
+    mode: function(w, op) {
+      w.mode = op.m;
+      if (op.m === 'survival') w.player.flying = false;
+    },
+  };
+
   // The one mutation path. Throws on invalid ops; appends to the log on success.
   function apply(w, op) {
     if (!w.inventory) w.inventory = {}; // stub worlds (mesh tests) may omit it
     if (!w.logOps) w.logOps = [];
     var err = validate(op);
     if (err) throw new Error('rejected op: ' + err + ' ' + JSON.stringify(op));
-    var B = Facraft.blocks;
-    switch (op.t) {
-      case 'set': {
-        // unconditional set (last-write-wins): keeps the log replayable and
-        // idempotent — guards live only at the trust boundaries
-        var old = get(w, op.x, op.y, op.z);
-        if (op.b !== B.BEDROCK && (op.y === 0 || old === B.BEDROCK)) {
-          throw new Error('bedrock is unbreakable');
-        }
-        setRaw(w, op.x, op.y, op.z, op.b);
-        if (op.b === B.AIR) {
-          if (old !== B.AIR) w.inventory[old] = (w.inventory[old] || 0) + 1; // break → collect
-        } else if ((w.inventory[op.b] || 0) > 0) {
-          w.inventory[op.b]--; // place → consume (floored at zero, deterministic)
-        }
-        break;
-      }
-      case 'craft': {
-        var res = Facraft.craft.craft(w.inventory, op.r, op.n);
-        if (!res.ok) throw new Error('craft failed: ' + res.error);
-        w.inventory = res.inv;
-        break;
-      }
-      case 'damage':
-        Facraft.survival.damage(w, op.cause, op.n);
-        break;
-      case 'respawn':
-        Facraft.survival.respawn(w, w.spawn);
-        w.player.x = w.spawn.x; w.player.y = w.spawn.y; w.player.z = w.spawn.z;
-        break;
-      case 'mode':
-        w.mode = op.m;
-        if (op.m === 'survival') w.player.flying = false;
-        break;
-    }
+    MUTATORS[op.t](w, op);
     w.logOps.push(op);
     return op;
   }

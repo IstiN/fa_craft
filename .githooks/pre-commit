@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+# CRAP is a one-way ratchet: the staged ceiling may move down, never up.
+# Emergency bypass: git commit --no-verify (not recommended).
+set -euo pipefail
+
+cd "$(git rev-parse --show-toplevel)"
+node scripts/crap-ratchet.js
+npm run crap

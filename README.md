@@ -5,10 +5,15 @@ Minecraft-like voxel sandbox widget (pure JS) for [flutter_js_widget_runtime](ht
 ## Development
 
 ```sh
-npm test          # node test/all.js — UT/IT suite
-npm run cover     # nyc coverage, statements >= 85 gate
-npm run crap      # crap4js, CRAP <= 30 gate
+npm run hooks:install  # once after clone: enable the committed pre-commit hook
+npm test               # node test/all.js — UT/IT suite
+npm run cover          # nyc coverage, statements >= 85 gate
+npm run crap           # crap4js, CRAP <= 16 gate + non-increasing ratchet
 ```
+
+The pre-commit hook compares the staged CRAP threshold with `HEAD`: lowering
+it is allowed, raising it is rejected (and 16 is the absolute ceiling), then
+runs the full `npm run crap` gate. CI runs the same absolute ceiling.
 
 ## Goldens (AC2 evidence)
 

@@ -50,64 +50,78 @@ Facraft.mesh = (function() {
   // handful of large ones — 3-10x fewer triangles for the painter and the
   // bridge. shadeFaces() works per-quad, so merged quads shade uniformly
   // (the per-block hue jitter becomes per-rectangle).
+  function buildMask(w, cx, cz, f, s, SIZES, p, q, seedCol) {
+    var A = f >> 1, positive = (f & 1) === 0;
+    var U = AXES[f][0], V = AXES[f][1];
+    var SU = SIZES[U], SV = SIZES[V];
+    var dn = positive ? 1 : -1;
+    for (var v = 0; v < SV; v++) {
+      for (var u = 0; u < SU; u++) {
+        p[A] = s; p[U] = u; p[V] = v;
+        var b = block(w, p[0], p[1], p[2], cx, cz);
+        if (!B().isSolid(b)) continue;
+        q[A] = s + dn; q[U] = u; q[V] = v;
+        if (B().isSolid(block(w, q[0], q[1], q[2], cx, cz))) continue;
+        // Pixel-grain texturing: one of 4 per-type tones from a
+        // world-position hash (grass sides use the dirt palette).
+        // The MERGE key below IS the tone, so only same-tone
+        // neighbours merge — crisp per-block grain at ~2.5-4x the
+        // fully-merged triangle count, zero view-dependence.
+        var pal = B().palette(b, A !== 1);
+        var h = ((cx * 16 + p[0]) * 73856093) ^ (p[1] * 19349663) ^
+                ((cz * 16 + p[2]) * 83492791);
+        h = (h ^ (h >>> 13)) >>> 0;
+        var col = pal[h & 3];
+        seedCol[v * SU + u] = col;
+        MASK[v * SU + u] =
+          ((Math.round(col[0] * 255) << 16) |
+            (Math.round(col[1] * 255) << 8) |
+            Math.round(col[2] * 255)) + 1;
+      }
+    }
+  }
+
+  function mergeSlice(positions, colors, indices, f, s, SIZES, seedCol) {
+    var A = f >> 1, positive = (f & 1) === 0;
+    var U = AXES[f][0], V = AXES[f][1];
+    var SU = SIZES[U], SV = SIZES[V];
+    for (var vv = 0; vv < SV; vv++) {
+      for (var uu = 0; uu < SU; uu++) {
+        var key = MASK[vv * SU + uu];
+        if (!key) continue;
+        var wdt = 1;
+        while (uu + wdt < SU && MASK[vv * SU + uu + wdt] === key) wdt++;
+        var hgt = 1;
+        outer: while (vv + hgt < SV) {
+          for (var du = 0; du < wdt; du++) {
+            if (MASK[(vv + hgt) * SU + uu + du] !== key) break outer;
+          }
+          hgt++;
+        }
+        emitQuad(positions, colors, indices, f, s, positive, A, U, V,
+          uu, uu + wdt, vv, vv + hgt, seedCol[vv * SU + uu]);
+        for (var dv = 0; dv < hgt; dv++) {
+          for (var du2 = 0; du2 < wdt; du2++) {
+            MASK[(vv + dv) * SU + uu + du2] = 0;
+          }
+        }
+      }
+    }
+  }
+
   function buildChunk(w, cx, cz) {
     var positions = [], colors = [], indices = [];
     var SIZES = [16, WG().CHUNK_Y, 16];
     var p = [0, 0, 0], q = [0, 0, 0];
     for (var f = 0; f < 6; f++) {
-      var A = f >> 1, positive = (f & 1) === 0;
+      var A = f >> 1;
       var U = AXES[f][0], V = AXES[f][1];
       var SU = SIZES[U], SV = SIZES[V];
-      var dn = positive ? 1 : -1;
       for (var s = 0; s < SIZES[A]; s++) {
         MASK.fill(0);
         var seedCol = new Array(SU * SV);
-        for (var v = 0; v < SV; v++) {
-          for (var u = 0; u < SU; u++) {
-            p[A] = s; p[U] = u; p[V] = v;
-            var b = block(w, p[0], p[1], p[2], cx, cz);
-            if (!B().isSolid(b)) continue;
-            q[A] = s + dn; q[U] = u; q[V] = v;
-            if (B().isSolid(block(w, q[0], q[1], q[2], cx, cz))) continue;
-            // Pixel-grain texturing: one of 4 per-type tones from a
-            // world-position hash (grass sides use the dirt palette).
-            // The MERGE key below IS the tone, so only same-tone
-            // neighbours merge — crisp per-block grain at ~2.5-4x the
-            // fully-merged triangle count, zero view-dependence.
-            var pal = B().palette(b, A !== 1);
-            var h = ((cx * 16 + p[0]) * 73856093) ^ (p[1] * 19349663) ^
-                    ((cz * 16 + p[2]) * 83492791);
-            h = (h ^ (h >>> 13)) >>> 0;
-            var col = pal[h & 3];
-            seedCol[v * SU + u] = col;
-            MASK[v * SU + u] =
-              ((Math.round(col[0] * 255) << 16) |
-                (Math.round(col[1] * 255) << 8) |
-                Math.round(col[2] * 255)) + 1;
-          }
-        }
-        for (var vv = 0; vv < SV; vv++) {
-          for (var uu = 0; uu < SU; uu++) {
-            var key = MASK[vv * SU + uu];
-            if (!key) continue;
-            var wdt = 1;
-            while (uu + wdt < SU && MASK[vv * SU + uu + wdt] === key) wdt++;
-            var hgt = 1;
-            outer: while (vv + hgt < SV) {
-              for (var du = 0; du < wdt; du++) {
-                if (MASK[(vv + hgt) * SU + uu + du] !== key) break outer;
-              }
-              hgt++;
-            }
-            emitQuad(positions, colors, indices, f, s, positive, A, U, V,
-              uu, uu + wdt, vv, vv + hgt, seedCol[vv * SU + uu]);
-            for (var dv = 0; dv < hgt; dv++) {
-              for (var du2 = 0; du2 < wdt; du2++) {
-                MASK[(vv + dv) * SU + uu + du2] = 0;
-              }
-            }
-          }
-        }
+        buildMask(w, cx, cz, f, s, SIZES, p, q, seedCol);
+        mergeSlice(positions, colors, indices, f, s, SIZES, seedCol);
       }
     }
     return { positions: positions, colors: colors, indices: indices, origin: [cx * 16, 0, cz * 16] };

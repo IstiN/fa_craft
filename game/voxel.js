@@ -264,9 +264,7 @@ Facraft.voxel = (function() {
     }
   }
 
-  function sync(w, player, prof) {
-    if (!isNative()) return { uploaded: 0, pending: 0 };
-    var pcx = Math.floor(player.x / 16), pcz = Math.floor(player.z / 16);
+  function uploadView(w, pcx, pcz, prof) {
     var todo = [];
     for (var dx = -VIEW_RADIUS; dx <= VIEW_RADIUS; dx++) {
       for (var dz = -VIEW_RADIUS; dz <= VIEW_RADIUS; dz++) {
@@ -281,12 +279,16 @@ Facraft.voxel = (function() {
       uploadChunk(w, todo[i].cx, todo[i].cz, prof);
       w.dirty.delete(todo[i].key);
     }
-    // Worldgen smoothing: data-only warm-up of the ring+1 margin, biased
-    // toward the direction of travel. Sprinting into fresh terrain used to
-    // burst ~5 lazy chunk generations (world.js get → worldgen.chunk) plus
-    // their mesh builds into the boundary-crossing frames — the mobile
-    // stutter report. Spreading generation over the approach keeps every
-    // frame's worldgen work bounded.
+    return { uploaded: n, pending: todo.length - n };
+  }
+
+  // Worldgen smoothing: data-only warm-up of the ring+1 margin, biased
+  // toward the direction of travel. Sprinting into fresh terrain used to
+  // burst ~5 lazy chunk generations (world.js get → worldgen.chunk) plus
+  // their mesh builds into the boundary-crossing frames — the mobile
+  // stutter report. Spreading generation over the approach keeps every
+  // frame's worldgen work bounded.
+  function warmView(w, player, pcx, pcz, uploadedCount) {
     var cold = [];
     if (!coldComplete || pcx !== lastColdPcx || pcz !== lastColdPcz) {
       lastColdPcx = pcx; lastColdPcz = pcz;
@@ -302,24 +304,34 @@ Facraft.voxel = (function() {
       coldComplete = cold.length === 0;
     }
     cold.sort(function(a, b) { return (a.ahead - b.ahead) || (a.d2 - b.d2); });
-    var warm = n > 0 ? 0 : Math.min(Math.max(0, streamBudget - 1), cold.length);
+    var warm = uploadedCount > 0 ? 0 : Math.min(Math.max(0, streamBudget - 1), cold.length);
     for (var g = 0; g < warm; g++) {
       Facraft.world.pregen(w, cold[g].cx, cold[g].cz);
     }
-    if (pcx !== lastEvictPcx || pcz !== lastEvictPcz) {
-      lastEvictPcx = pcx; lastEvictPcz = pcz;
-      for (var key in uploaded) {
-        var parts = key.split(',');
-        var kx = parseInt(parts[0], 10), kz = parseInt(parts[1], 10);
-        if (Math.abs(kx - pcx) > VIEW_RADIUS + 1 ||
-            Math.abs(kz - pcz) > VIEW_RADIUS + 1) {
-          push('voxel.chunkRemove', { id: NATIVE_ID, key: key });
-          delete uploaded[key];
-        }
+  }
+
+  function evictView(w, pcx, pcz) {
+    if (pcx === lastEvictPcx && pcz === lastEvictPcz) return;
+    lastEvictPcx = pcx; lastEvictPcz = pcz;
+    for (var key in uploaded) {
+      var parts = key.split(',');
+      var kx = parseInt(parts[0], 10), kz = parseInt(parts[1], 10);
+      if (Math.abs(kx - pcx) > VIEW_RADIUS + 1 ||
+          Math.abs(kz - pcz) > VIEW_RADIUS + 1) {
+        push('voxel.chunkRemove', { id: NATIVE_ID, key: key });
+        delete uploaded[key];
       }
-      evictWorldData(w, pcx, pcz);
     }
-    return { uploaded: n, pending: todo.length - n };
+    evictWorldData(w, pcx, pcz);
+  }
+
+  function sync(w, player, prof) {
+    if (!isNative()) return { uploaded: 0, pending: 0 };
+    var pcx = Math.floor(player.x / 16), pcz = Math.floor(player.z / 16);
+    var result = uploadView(w, pcx, pcz, prof);
+    warmView(w, player, pcx, pcz, result.uploaded);
+    evictView(w, pcx, pcz);
+    return result;
   }
 
   // Aimed-face marker: a bright border RING on the raycast entry face —

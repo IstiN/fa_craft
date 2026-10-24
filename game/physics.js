@@ -83,10 +83,9 @@ Facraft.physics = (function() {
     return { landed: landed };
   }
 
-  function substep(p, input, w, dt, mode) {
+  function applyInput(p, input, dt, mode) {
     var flying = p.flying === true && mode === 'creative';
     var speed = flying ? FLY : (input.sneak ? SNEAK : (input.sprint ? SPRINT : WALK));
-
     var wish = wishDir(p, input);
     p.vx = wish.x * speed;
     p.vz = wish.z * speed;
@@ -98,17 +97,11 @@ Facraft.physics = (function() {
       p.vy -= GRAVITY * dt;
       if (p.vy < -MAX_FALL) p.vy = -MAX_FALL;
     }
+    return flying;
+  }
 
+  function moveVertical(w, p, dt, flying, impactBefore) {
     var landed = 0;
-    var impactBefore = -p.vy;
-
-    var rx = moveAxis(w, p, p.vx * dt, 'x');
-    p.x = rx.pos;
-    if (rx.blocked) p.vx = 0;
-    var rz = moveAxis(w, p, p.vz * dt, 'z');
-    p.z = rz.pos;
-    if (rz.blocked) p.vz = 0;
-
     var ry = moveAxis(w, p, p.vy * dt, 'y');
     if (ry.blocked && p.vy < 0) {
       p.y = Math.floor(p.y + p.vy * dt) + 1; // snap onto the block top (no micro-bounce)
@@ -121,8 +114,21 @@ Facraft.physics = (function() {
       p.y = ry.pos;
       if (!flying) p.onGround = false;
     }
+    return landed;
+  }
 
-    return { landed: landed };
+  function substep(p, input, w, dt, mode) {
+    var flying = applyInput(p, input, dt, mode);
+    var impactBefore = -p.vy;
+
+    var rx = moveAxis(w, p, p.vx * dt, 'x');
+    p.x = rx.pos;
+    if (rx.blocked) p.vx = 0;
+    var rz = moveAxis(w, p, p.vz * dt, 'z');
+    p.z = rz.pos;
+    if (rz.blocked) p.vz = 0;
+
+    return { landed: moveVertical(w, p, dt, flying, impactBefore) };
   }
 
   return { step: step, dirOf: dirOf, EYE_H: 1.62, DT_MAX: DT_MAX };

@@ -8,7 +8,8 @@
     "instrument": "rm -rf .nyc-src .nyc_output coverage && nyc instrument game .nyc-src --extension .js",
     "merge": "node scripts/coverage-merge.js",
     "cover": "npm run instrument && node test/all.js && npm run merge && nyc report --reporter=text-summary --reporter=json-summary --check-coverage --statements 85",
-    "crap": "npm run cover && node node_modules/crap4js/src/cli.js --coverage coverage/coverage-final.json --threshold 30 game",
+    "crap": "node scripts/crap-ratchet.js --worktree && npm run cover && node node_modules/crap4js/src/cli.js --coverage coverage/coverage-final.json --threshold 16 game",
+    "hooks:install": "git config core.hooksPath .githooks",
     "goldens": "node tools/goldens.js",
     "goldens:verify": "node tools/goldens.js verify"
   },
